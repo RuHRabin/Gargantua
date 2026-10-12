@@ -35,6 +35,9 @@ npm run preview
 
 Pushing to `main` builds the site and publishes it to GitHub Pages through `.github/workflows/deploy.yml`. In the repository, open Settings > Pages and set Source to **GitHub Actions**.
 
+## 🤝 Contributors
+* **Claude** (AI Assistant by Anthropic) - Code generation & optimization.
+
 ## Disclaimer
 
 Fan project. Not affiliated with or endorsed by the makers of Interstellar.
