@@ -38,6 +38,7 @@ Pushing to `main` builds the site and publishes it to GitHub Pages through `.git
 ## 🤝 Contributors
 * **Claude** (AI Assistant by Anthropic) - Code generation & optimization.
 
+
 ## Disclaimer
 
 Fan project. Not affiliated with or endorsed by the makers of Interstellar.
