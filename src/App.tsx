@@ -1,19 +1,39 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { Engine, type EngineEvent, type HudState } from "./game/Engine";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import type { Engine, EngineEvent, QualityMode } from "./game/Engine";
+import { createTelemetry } from "./game/telemetry";
+import { loadProgress, saveProgress, type SavedProgress } from "./game/progress";
+import { LESSON_BY_ID, LESSONS } from "./game/learning";
+import { MISSIONS } from "./game/campaign";
+
+const MISSION_SUBJECTS = MISSIONS.map((mission) => mission.subjects[0]);
+import { Intro, OrbitMark } from "./components/Intro";
+import { FlightHud } from "./components/FlightHud";
+import { FieldGuide } from "./components/FieldGuide";
+import { MissionControl } from "./components/MissionControl";
+import { Settings } from "./components/Settings";
 import { TarsMessage } from "./components/Tars";
+import { LevelDebrief } from "./components/LevelDebrief";
+import { StationService } from "./components/StationService";
+import { ExplorationChart } from "./components/ExplorationChart";
+import { NasaLive } from "./components/NasaLive";
+import { HowToPlay } from "./components/HowToPlay";
 
 type Phase = "intro" | "countdown" | "play" | "end";
-type Ending = { reason: "tesseract" | "timeout" | "win"; score: number; years: number } | null;
+type Debrief = Extract<EngineEvent, { type: "mission" }>;
+type Panel = "guide" | "missions" | "settings" | "station" | "chart" | "nasa" | "howto" | null;
+type Ending = Extract<EngineEvent, { type: "end" }>;
+type Toast = { id: number; text: string; color: string };
 
-let uid = 0;
-const nextId = () => ++uid;
-
-const fmt = (n: number, d = 1) => n.toFixed(d);
-
-function hourHere(dilation: number) {
-  const years = 0.12 * Math.pow(dilation, 4);
-  if (years < 1) return `${Math.round(years * 365)} EARTH DAYS`;
-  return `${years.toFixed(1)} EARTH YEARS`;
+function readPreferences() {
+  try {
+    const value = JSON.parse(localStorage.getItem("gargantua.preferences") ?? "{}");
+    return {
+      quality: (["auto", "eco", "cinematic"].includes(value.quality) ? value.quality
+        : window.matchMedia("(pointer: coarse)").matches ? "eco" : "auto") as QualityMode,
+      humor: typeof value.humor === "number" && Number.isFinite(value.humor) ? Math.max(0, Math.min(100, value.humor)) : 75,
+      muted: value.muted === true,
+    };
+  } catch { return { quality: "auto" as QualityMode, humor: 75, muted: false }; }
 }
 
 export default function App() {
@@ -21,413 +41,330 @@ export default function App() {
   const markerRef = useRef<HTMLDivElement>(null);
   const reticleRef = useRef<HTMLDivElement>(null);
   const engineRef = useRef<Engine | null>(null);
-
+  const [telemetry] = useState(createTelemetry);
+  const [progress, setProgress] = useState(loadProgress);
+  const progressRef = useRef(progress);
+  const [preferences, setPreferences] = useState(readPreferences);
+  const preferencesRef = useRef(preferences);
+  preferencesRef.current = preferences;
   const [phase, setPhase] = useState<Phase>("intro");
-  const [hud, setHud] = useState<HudState | null>(null);
-  const [msg, setMsg] = useState<{ text: string; id: number } | null>(null);
-  const [pops, setPops] = useState<{ id: number; text: string; color: string }[]>([]);
-  const [ending, setEnding] = useState<Ending>(null);
-  const [flash, setFlash] = useState(false);
+  const phaseRef = useRef<Phase>("intro");
+  phaseRef.current = phase;
+  const [panel, setPanel] = useState<Panel>(null);
+  const panelRef = useRef<Panel>(null);
+  const resumeAfterPanel = useRef(false);
+  const [guideId, setGuideId] = useState("gargantua");
   const [paused, setPaused] = useState(false);
-  const [muted, setMuted] = useState(false);
-  const [count, setCount] = useState(3);
-  const [isTouch] = useState(() => typeof window !== "undefined" && window.matchMedia("(pointer: coarse)").matches);
+  const [ready, setReady] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [countdown, setCountdown] = useState(3);
+  const [ending, setEnding] = useState<Ending | null>(null);
+  const [debrief, setDebrief] = useState<Debrief | null>(null);
+  const [message, setMessage] = useState<{ text: string; id: number } | null>(null);
+  const [toasts, setToasts] = useState<Toast[]>([]);
+  const [discovery, setDiscovery] = useState<string | null>(null);
+  const [flash, setFlash] = useState(false);
+  const timerRef = useRef(new Set<ReturnType<typeof setTimeout>>());
+  const nextId = useRef(0);
 
-  const pushPop = useCallback((text: string, color: string) => {
-    const id = nextId();
-    setPops((p) => [...p.slice(-4), { id, text, color }]);
-    setTimeout(() => setPops((p) => p.filter((x) => x.id !== id)), 1600);
+  const later = useCallback((callback: () => void, ms: number) => {
+    const timer = setTimeout(() => { timerRef.current.delete(timer); callback(); }, ms);
+    timerRef.current.add(timer);
+    return timer;
   }, []);
 
-  useEffect(() => {
-    if (!canvasRef.current || !markerRef.current) return;
-    const onEvent = (e: EngineEvent) => {
-      switch (e.type) {
-        case "message":
-          setMsg({ text: e.text, id: nextId() });
-          break;
-        case "collect":
-          pushPop(`+${e.value} QUANTA`, "#ffc27a");
-          break;
-        case "fuel":
-          pushPop("+35 FUEL", "#8fd0ff");
-          break;
-        case "upload":
-          pushPop(`${e.value} UPLOADED`, "#e8e4dc");
-          break;
-        case "survey":
-          pushPop(`${e.name} SURVEYED +${e.value}`, "#9fd0ff");
-          break;
-        case "pause":
-          setPaused(e.paused);
-          break;
-        case "horizon":
-          setFlash(true);
-          setTimeout(() => setFlash(false), 1800);
-          break;
-        case "end":
-          setEnding({ reason: e.reason, score: e.score, years: e.years });
-          setPhase("end");
-          setMsg(null);
-          break;
-      }
-    };
-    const engine = new Engine(canvasRef.current, markerRef.current, setHud, onEvent);
-    engineRef.current = engine;
-    return () => {
-      engine.dispose();
-      engineRef.current = null;
-    };
-  }, [pushPop]);
-
-  useEffect(() => {
-    const move = (e: PointerEvent) => {
-      if (reticleRef.current) reticleRef.current.style.transform = `translate(${e.clientX}px, ${e.clientY}px)`;
-    };
-    window.addEventListener("pointermove", move);
-    return () => window.removeEventListener("pointermove", move);
+  const commitProgress = useCallback((update: (previous: SavedProgress) => SavedProgress) => {
+    const next = update(progressRef.current);
+    progressRef.current = next;
+    setProgress(next);
+    saveProgress(next);
   }, []);
 
+  const pushToast = useCallback((text: string, color = "#dfbd8a") => {
+    const id = ++nextId.current;
+    setToasts((previous) => [...previous.slice(-2), { id, text, color }]);
+    later(() => setToasts((previous) => previous.filter((entry) => entry.id !== id)), 3200);
+  }, [later]);
+
   useEffect(() => {
-    if (!msg) return;
-    const t = setTimeout(() => setMsg(null), 7000);
-    return () => clearTimeout(t);
-  }, [msg]);
+    let cancelled = false;
+    let engine: Engine | null = null;
+    // Deferring one frame avoids constructing two WebGL scenes under React StrictMode.
+    const frame = requestAnimationFrame(() => {
+      void import("./game/Engine").then(({ Engine: GameEngine }) => {
+        if (cancelled || !canvasRef.current || !markerRef.current) return;
+        const onEvent = (event: EngineEvent) => {
+          if (cancelled) return;
+          switch (event.type) {
+            case "message": setMessage({ text: event.text, id: ++nextId.current }); break;
+            case "collect": pushToast(`+${event.value} research / +${event.value * 10} pts`); break;
+            case "fuel": pushToast("Propellant recovered / +25 pts", "#a5cddd"); break;
+            case "upload": pushToast(`${event.value} research transmitted`); break;
+            case "survey": pushToast(`${event.name} surveyed / +150 pts`, "#a5cddd"); break;
+            case "bonus": pushToast(event.text); break;
+            case "hazard": pushToast(event.text, event.tone === "bad" ? "#ef9169" : "#a5cddd"); break;
+            case "sector-charted":
+              if (event.firstEver) {
+                commitProgress((previous) => ({ ...previous, chartedSectors: [...new Set([...previous.chartedSectors, event.sector.id])] }));
+                pushToast(`New sector charted: ${event.sector.label} / +${event.points}`, "#cfe0c4");
+              }
+              break;
+            case "station-docked": pushToast("Docked at Endurance / refuelling. Tap Station for full service", "#bfe3cf"); break;
+            case "station-serviced": pushToast("Endurance service complete / all systems full", "#bfe3cf"); break;
+            case "discovery": {
+              commitProgress((previous) => ({ ...previous, discoveries: [...new Set([...previous.discoveries, event.id])] }));
+              setDiscovery(event.id);
+              break;
+            }
+            case "mission": {
+              const { result } = event;
+              setMessage(null);
+              setDiscovery(null);
+              setDebrief(event);
+              commitProgress((previous) => ({ ...previous,
+                unlockedLevel: Math.max(previous.unlockedLevel, Math.min(MISSIONS.length, result.level + 1)),
+                completedLevel: Math.max(previous.completedLevel, result.level),
+                bestPoints: Math.max(previous.bestPoints, result.totalPoints),
+                stars: { ...previous.stars, [result.level]: Math.max(previous.stars[result.level] ?? 0, result.stars) },
+              }));
+              break;
+            }
+            case "pause": {
+              setPaused(event.paused);
+              if (event.paused && phaseRef.current === "play" && panelRef.current === null) {
+                resumeAfterPanel.current = true;
+                panelRef.current = "settings";
+                setPanel("settings");
+              }
+              break;
+            }
+            case "horizon": setFlash(true); later(() => setFlash(false), 1600); break;
+            case "end": {
+              setEnding(event); setPhase("end"); phaseRef.current = "end"; setMessage(null);
+              commitProgress((previous) => ({ ...previous, bestPoints: Math.max(previous.bestPoints, event.points) }));
+              break;
+            }
+          }
+        };
+        try {
+          engine = new GameEngine(canvasRef.current, markerRef.current, telemetry.publish, onEvent);
+          engineRef.current = engine;
+          engine.setQuality(preferencesRef.current.quality);
+          engine.setHumor(preferencesRef.current.humor);
+          engine.setMuted(preferencesRef.current.muted);
+          engine.setChartedSectors(progressRef.current.chartedSectors);
+          if (panelRef.current) engine.setPaused(true);
+          void engine.ready.then(() => { if (!cancelled) setReady(true); }).catch(() => {
+            if (!cancelled) setError("The 3D renderer could not initialize.");
+          });
+        } catch {
+          if (!cancelled) setError("This device needs a WebGL 2-capable browser for flight.");
+        }
+      }).catch(() => { if (!cancelled) setError("The flight module could not load. Please refresh to retry."); });
+    });
+    return () => { cancelled = true; cancelAnimationFrame(frame); engine?.dispose(); engineRef.current = null; };
+  }, [commitProgress, later, pushToast, telemetry]);
 
-  const begin = () => {
-    engineRef.current?.initAudio();
-    setPhase("countdown");
-    setCount(3);
-    let c = 3;
-    const iv = setInterval(() => {
-      c--;
-      setCount(c);
-      if (c <= 0) {
-        clearInterval(iv);
-        setTimeout(() => {
-          setEnding(null);
-          setHud(null);
-          setPhase("play");
-          engineRef.current?.startGame();
-        }, 700);
+  useEffect(() => {
+    engineRef.current?.setHumor(preferences.humor);
+    engineRef.current?.setMuted(preferences.muted);
+    try { localStorage.setItem("gargantua.preferences", JSON.stringify(preferences)); } catch { /* Storage is optional. */ }
+  }, [preferences]);
+
+  useEffect(() => {
+    if (!message) return;
+    const timer = later(() => setMessage(null), Math.max(7000, message.text.length * 30 + 3000));
+    return () => { clearTimeout(timer); timerRef.current.delete(timer); };
+  }, [message, later]);
+
+  useEffect(() => {
+    if (!discovery) return;
+    const timer = later(() => setDiscovery(null), 12000);
+    return () => { clearTimeout(timer); timerRef.current.delete(timer); };
+  }, [discovery, later]);
+
+  useEffect(() => () => { timerRef.current.forEach(clearTimeout); timerRef.current.clear(); }, []);
+
+  const openPanel = useCallback((next: NonNullable<Panel>, id?: string) => {
+    if (phaseRef.current === "countdown") return;
+    if (!panelRef.current) resumeAfterPanel.current = !engineRef.current?.paused;
+    panelRef.current = next;
+    if (id) setGuideId(id);
+    setPanel(next);
+    engineRef.current?.setPaused(true);
+  }, []);
+
+  const closePanel = useCallback(() => {
+    panelRef.current = null;
+    setPanel(null);
+    if (resumeAfterPanel.current) { engineRef.current?.setPaused(false); setPaused(false); }
+    resumeAfterPanel.current = false;
+  }, []);
+
+  const openGuide = useCallback((id = "gargantua") => openPanel("guide", id), [openPanel]);
+  const showGuide = useCallback(() => openGuide(), [openGuide]);
+  const showClockLesson = useCallback(() => openGuide("relativity"), [openGuide]);
+  const showMissions = useCallback(() => openPanel("missions"), [openPanel]);
+  const showStation = useCallback(() => openPanel("station"), [openPanel]);
+  const showChart = useCallback(() => openPanel("chart"), [openPanel]);
+  const showNasa = useCallback(() => openPanel("nasa"), [openPanel]);
+  const showHowTo = useCallback(() => openPanel("howto"), [openPanel]);
+  useEffect(() => {
+    if (!ready) return;
+    try {
+      if (localStorage.getItem("gargantua.manualSeen")) return;
+      localStorage.setItem("gargantua.manualSeen", "1");
+    } catch { return; }
+    showHowTo();
+  }, [ready, showHowTo]);
+  const plotSector = useCallback((ring: number, bearing: number) => {
+    engineRef.current?.setSectorTarget(ring, bearing);
+    if (engineRef.current && !engineRef.current.autopilot) engineRef.current.toggleAutopilot();
+    closePanel();
+  }, [closePanel]);
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if ((event.target as HTMLElement)?.closest("input, textarea, select")) return;
+      if (event.code === "KeyJ" && !event.repeat && phaseRef.current !== "countdown") {
+        event.preventDefault(); event.stopPropagation();
+        if (panelRef.current === "guide") closePanel(); else showGuide();
       }
-    }, 1000);
-  };
+      if (event.code === "KeyM" && !event.repeat && phaseRef.current === "play") {
+        event.preventDefault();
+        if (panelRef.current === "chart") closePanel(); else showChart();
+      }
+      if (event.code === "KeyH" && !event.repeat && phaseRef.current === "play" && engineRef.current?.docking) {
+        event.preventDefault();
+        if (panelRef.current === "station") closePanel(); else showStation();
+      }
+    };
+    const onPointer = (event: PointerEvent) => {
+      if (reticleRef.current && phaseRef.current === "play") reticleRef.current.style.transform = `translate3d(${event.clientX}px,${event.clientY}px,0)`;
+    };
+    window.addEventListener("keydown", onKey, true);
+    window.addEventListener("pointermove", onPointer, { passive: true });
+    return () => { window.removeEventListener("keydown", onKey, true); window.removeEventListener("pointermove", onPointer); };
+  }, [closePanel, showGuide, showChart, showStation]);
 
-  const toOrbit = () => {
-    engineRef.current?.toIntro();
-    setEnding(null);
-    setPhase("intro");
-  };
+  const launch = useCallback((level: number) => {
+    if (!ready || !engineRef.current || phaseRef.current === "countdown") return;
+    level = Math.max(1, Math.min(progressRef.current.unlockedLevel, level));
+    timerRef.current.forEach(clearTimeout); timerRef.current.clear();
+    panelRef.current = null; setPanel(null); resumeAfterPanel.current = false;
+    engineRef.current.initAudio(); engineRef.current.toIntro();
+    setPaused(false); setPhase("countdown"); phaseRef.current = "countdown";
+    setCountdown(3); setEnding(null); setDebrief(null); setToasts([]); setDiscovery(null); setMessage(null); setFlash(false);
+    later(() => setCountdown(2), 1000);
+    later(() => setCountdown(1), 2000);
+    later(() => setCountdown(0), 3000);
+    later(() => {
+      setPhase("play"); phaseRef.current = "play";
+      engineRef.current?.startGame(level);
+      progressRef.current.mastered.forEach((id) => engineRef.current?.rewardKnowledge(id));
+    }, 3550);
+  }, [later, ready]);
 
-  const toggleMute = () => {
-    const m = !muted;
-    setMuted(m);
-    engineRef.current?.setMuted(m);
-  };
+  const begin = useCallback(() => launch(progressRef.current.completedLevel >= MISSIONS.length ? 1 : progressRef.current.unlockedLevel), [launch]);
+  const returnToOrbit = useCallback(() => {
+    timerRef.current.forEach(clearTimeout); timerRef.current.clear();
+    closePanel(); engineRef.current?.toIntro(); telemetry.publish(null);
+    setPhase("intro"); phaseRef.current = "intro"; setEnding(null); setDebrief(null); setMessage(null); setDiscovery(null); setPaused(false); setToasts([]); setFlash(false);
+  }, [closePanel, telemetry]);
 
-  const prox = hud?.proximity ?? 0;
+  const continueLevel = useCallback(() => {
+    setDebrief(null);
+    setToasts([]);
+    engineRef.current?.continueLevel();
+  }, []);
+
+  const replayLevel = useCallback(() => {
+    const level = debrief?.result.level ?? 1;
+    setDebrief(null);
+    launch(level);
+  }, [debrief, launch]);
+
+  const debriefGuide = useCallback(() => {
+    const level = debrief?.result.level ?? 1;
+    const subject = MISSION_SUBJECTS[level - 1] ?? "gargantua";
+    openGuide(subject);
+  }, [debrief, openGuide]);
+
+  const onMaster = useCallback((id: string) => {
+    if (progressRef.current.mastered.includes(id) || !LESSON_BY_ID.has(id)) return;
+    engineRef.current?.rewardKnowledge(id);
+    commitProgress((previous) => ({ ...previous, mastered: [...previous.mastered, id],
+      bestPoints: Math.max(previous.bestPoints, engineRef.current?.mode === "play" ? engineRef.current.campaign.points : (previous.mastered.length + 1) * 100),
+    }));
+    pushToast("Understanding unlocked / +100 knowledge points", "#aacfb2");
+  }, [commitProgress, pushToast]);
+
+  const changeQuality = useCallback((quality: QualityMode) => {
+    engineRef.current?.setQuality(quality);
+    setPreferences((previous) => ({ ...previous, quality }));
+  }, []);
+  const changeHumor = useCallback((humor: number) => setPreferences((previous) => ({ ...previous, humor })), []);
 
   return (
-    <div className={`relative w-full h-full select-none ${phase === "play" && !paused ? "cursor-none" : ""}`}>
-      <canvas ref={canvasRef} className="absolute inset-0 w-full h-full block" />
-      <div ref={markerRef} className={`absolute inset-0 pointer-events-none overflow-hidden ${phase === "play" ? "" : "hidden"}`} />
-      <div className="grain absolute inset-0 pointer-events-none overflow-hidden" />
+    <div className={`gargantua-app ${phase === "play" ? "in-flight" : ""} ${panel ? "panel-open" : ""}`}>
+      <canvas ref={canvasRef} className="universe-canvas" aria-label="Interactive three-dimensional black hole and spacecraft simulation" />
+      <div ref={markerRef} className={`world-markers ${phase === "play" ? "" : "is-hidden"}`} />
+      <div className="cinematic-grade" />
+      {error && <div className="fallback-universe" aria-hidden="true"><div /><i /></div>}
+      <div className={`letterbox top ${phase === "play" ? "open" : ""}`} /><div className={`letterbox bottom ${phase === "play" ? "open" : ""}`} />
 
-      <div className={`absolute inset-x-0 top-0 bg-black pointer-events-none transition-all duration-[2000ms] ${phase === "play" ? "h-0" : "h-[7vh]"}`} />
-      <div className={`absolute inset-x-0 bottom-0 bg-black pointer-events-none transition-all duration-[2000ms] ${phase === "play" ? "h-0" : "h-[7vh]"}`} />
+      <header className={`main-navigation ${phase === "play" ? "flight-navigation" : ""}`}>
+        <button className="brand-link" aria-label="Gargantua home" onClick={phase === "play" ? showMissions : returnToOrbit}><OrbitMark /><span>Gargantua</span></button>
+        <span className="nav-subtitle">An interactive expedition</span>
+        <nav aria-label="Main navigation"><button disabled={phase === "countdown"} onClick={showMissions}>Missions</button><button disabled={phase === "countdown"} onClick={showGuide}>Field guide <span className="nav-key">J</span></button>{phase === "play" && <button onClick={showChart}>Star chart <span className="nav-key">M</span></button>}<button disabled={phase === "countdown"} onClick={showNasa}>NASA live</button><button disabled={phase === "countdown"} onClick={showHowTo}>How to play</button><button disabled={phase === "countdown"} className="settings-button" onClick={() => openPanel("settings")} aria-label="Open flight settings"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1"><path d="M4 7h16M4 17h16" /><circle cx="9" cy="7" r="2.5" fill="#080c0e" /><circle cx="16" cy="17" r="2.5" fill="#080c0e" /></svg></button></nav>
+      </header>
 
-      <button
-        onClick={toggleMute}
-        className="absolute top-[calc(7vh+14px)] right-6 z-30 font-mono text-[10px] tracking-[.3em] text-stone-400 hover:text-amber-200 transition-colors"
-        style={phase === "play" ? { top: 14, right: 18 } : undefined}
-      >
-        {muted ? "SOUND · OFF" : "SOUND · ON"}
-      </button>
-
-      {phase === "intro" && <Intro onBegin={begin} />}
-
-      {phase === "countdown" && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-          <p className="font-mono text-[11px] tracking-[.5em] text-stone-400 fade-up">MAIN ENGINE START</p>
-          <div key={count} className="fade-up font-display font-thin text-[22vh] leading-none text-stone-100 mt-4">
-            {count > 0 ? count : ""}
-          </div>
-          {count <= 0 && <p className="fade-up title-wide text-xl text-amber-100">IGNITION</p>}
+      {phase === "intro" && <Intro onBegin={begin} onGuide={showGuide} ready={ready} error={error} level={progress.completedLevel >= MISSIONS.length ? 1 : progress.unlockedLevel} />}
+      {phase === "countdown" && <div className="countdown-composition"><p className="micro-label">Gargantua / Instruments ready</p><div key={countdown} className="countdown-number">{countdown || "GO"}</div><p className="countdown-note">Your next discovery is out there.</p></div>}
+      {phase === "play" && <>
+        <FlightHud telemetry={telemetry} engine={engineRef} onMissions={showMissions} onGuide={showClockLesson} />
+        {message && <div className="tars-comms"><TarsMessage text={message.text} id={message.id} /></div>}
+        {discovery && <button className="discovery-notice" onClick={() => openGuide(discovery)}><span className="micro-label">Field note discovered / +50 pts</span><strong>{LESSON_BY_ID.get(discovery)?.name}</strong><span className="discovery-learn">Learn the idea <span aria-hidden="true">+</span></span></button>}
+        <StationButton telemetry={telemetry} onOpen={showStation} hidden={!!panel || !!debrief} />
+        <div className="mobile-flight-controls">
+          <button onPointerDown={(event) => { event.currentTarget.setPointerCapture(event.pointerId); engineRef.current?.setTouchThrust(true); }} onPointerUp={() => engineRef.current?.setTouchThrust(false)} onPointerCancel={() => engineRef.current?.setTouchThrust(false)}>Thrust</button>
+          <button onPointerDown={(event) => { event.currentTarget.setPointerCapture(event.pointerId); engineRef.current?.setTouchRetro(true); }} onPointerUp={() => engineRef.current?.setTouchRetro(false)} onPointerCancel={() => engineRef.current?.setTouchRetro(false)}>Brake</button>
+          <button onPointerDown={(event) => { event.currentTarget.setPointerCapture(event.pointerId); engineRef.current?.setTouchScoop(true); }} onPointerUp={() => engineRef.current?.setTouchScoop(false)} onPointerCancel={() => engineRef.current?.setTouchScoop(false)}>Scoop</button>
         </div>
-      )}
+        <div ref={reticleRef} className={`mouse-reticle ${paused || panel || debrief ? "is-hidden" : ""}`} aria-hidden="true"><span /><i /></div>
+        {debrief && !panel && <LevelDebrief result={debrief.result} campaignComplete={debrief.campaignComplete} bestStars={progress.stars[debrief.result.level] ?? 0} onContinue={continueLevel} onReplay={replayLevel} onGuide={debriefGuide} />}
+      </>}
+      {phase === "end" && ending && <EndScreen ending={ending} mastered={progress.mastered.length} onAgain={() => launch(1)} onGuide={showGuide} onOrbit={returnToOrbit} />}
 
-      {phase === "play" && hud && (
-        <>
-          <div
-            className="absolute inset-0 pointer-events-none transition-opacity duration-700"
-            style={{
-              opacity: Math.max(0, (prox - 0.6) * 2.5),
-              boxShadow: "inset 0 0 220px 40px rgba(255,90,20,.45)",
-            }}
-          />
-          {prox > 0.8 && (
-            <div className="absolute top-24 inset-x-0 text-center pointer-events-none">
-              <span className="pulse-line font-mono text-[11px] tracking-[.5em] text-orange-300">⚠ EVENT HORIZON PROXIMITY ⚠</span>
-            </div>
-          )}
+      <button className={`sound-switch ${phase === "play" ? "during-flight" : ""}`} aria-label={preferences.muted ? "Enable sound" : "Mute sound"} aria-pressed={!preferences.muted} onClick={() => { engineRef.current?.initAudio(); setPreferences((previous) => ({ ...previous, muted: !previous.muted })); }}><span className={`sound-bars ${preferences.muted ? "muted" : ""}`} aria-hidden="true"><i /><i /><i /><i /></span>{preferences.muted ? "Sound off" : "Sound on"}</button>
+      <div className={`event-toast-stack ${panel ? "above-dialog" : ""}`} role="status" aria-live="polite">{toasts.map((toast) => <p key={toast.id} className="event-toast" style={{ color: toast.color }}>{toast.text}</p>)}</div>
+      <div className={`horizon-flash ${flash ? "active" : ""}`} />
 
-          <div className="absolute top-5 left-5 hud-panel px-5 py-4 w-[260px] pointer-events-none">
-            <p className="font-mono text-[10px] tracking-[.35em] text-stone-400">EARTH · TIME ELAPSED</p>
-            <p className="font-mono text-3xl text-stone-100 mt-1">
-              {fmt(hud.earthYears, 2)}
-              <span className="text-xs text-stone-400 ml-2">YRS</span>
-            </p>
-            <div className="mt-2 h-[2px] bg-stone-800">
-              <div
-                className="h-full transition-all"
-                style={{
-                  width: `${Math.min(100, (hud.earthYears / hud.maxYears) * 100)}%`,
-                  background: hud.earthYears > hud.maxYears * 0.8 ? "#ff7a45" : "#e8e4dc",
-                }}
-              />
-            </div>
-            <p className="font-mono text-[10px] text-stone-400 mt-2 tracking-widest">
-              MURPH · AGE {Math.floor(10 + hud.earthYears)} · LIMIT {hud.maxYears} YRS
-            </p>
-          </div>
-
-          <div className="absolute top-12 right-5 hud-panel px-5 py-4 w-[260px] text-right pointer-events-none">
-            <p className="font-mono text-[10px] tracking-[.35em] text-stone-400">TIME DILATION</p>
-            <p className="font-mono text-3xl mt-1" style={{ color: hud.dilation > 1.6 ? "#ffb070" : "#e8e4dc" }}>
-              ×{fmt(Math.pow(hud.dilation, 4), 2)}
-            </p>
-            <p className="font-mono text-[10px] text-stone-300 mt-2 tracking-widest">1 HOUR HERE =</p>
-            <p className="font-mono text-[11px] text-amber-200 tracking-widest">{hourHere(hud.dilation)}</p>
-          </div>
-
-          <div className="absolute bottom-5 left-5 hud-panel px-5 py-4 w-[260px] pointer-events-none">
-            <div className="flex justify-between font-mono text-[10px] tracking-[.3em] text-stone-400">
-              <span>RANGER · FUEL</span>
-              <span className={hud.fuel < 20 ? "text-orange-400 pulse-line" : ""}>{Math.round(hud.fuel)}%</span>
-            </div>
-            <div className="mt-2 flex gap-[3px]">
-              {Array.from({ length: 20 }).map((_, i) => (
-                <div
-                  key={i}
-                  className="h-2 flex-1"
-                  style={{ background: i < hud.fuel / 5 ? (hud.fuel < 20 ? "#ff7a45" : "#8fd0ff") : "rgba(255,255,255,.08)" }}
-                />
-              ))}
-            </div>
-            <div className="grid grid-cols-2 gap-2 mt-3 font-mono">
-              <div>
-                <p className="text-[9px] tracking-[.3em] text-stone-500">VELOCITY</p>
-                <p className="text-sm text-stone-100">{Math.round(hud.speed * 1370)} km/s</p>
-              </div>
-              <div>
-                <p className="text-[9px] tracking-[.3em] text-stone-500">RADIUS</p>
-                <p className="text-sm text-stone-100">{fmt(hud.distance, 2)} rs</p>
-              </div>
-            </div>
-          </div>
-
-          <div className="absolute bottom-5 right-5 hud-panel px-5 py-4 w-[260px] text-right pointer-events-none">
-            <p className="font-mono text-[10px] tracking-[.35em] text-stone-400">QUANTUM DATA</p>
-            <div className="flex justify-end items-baseline gap-3 mt-1 font-mono">
-              <span className="text-[10px] text-amber-300 tracking-widest">HOLD {hud.cargo}</span>
-              <span className="text-3xl text-stone-100">{hud.uploaded}</span>
-              <span className="text-xs text-stone-400">/ {hud.goal}</span>
-            </div>
-            <div className="mt-2 h-[2px] bg-stone-800 relative">
-              <div className="absolute inset-y-0 left-0 bg-stone-100" style={{ width: `${Math.min(100, (hud.uploaded / hud.goal) * 100)}%` }} />
-              <div
-                className="absolute inset-y-0 bg-amber-400/70"
-                style={{
-                  left: `${Math.min(100, (hud.uploaded / hud.goal) * 100)}%`,
-                  width: `${Math.max(0, Math.min(100 - (hud.uploaded / hud.goal) * 100, (hud.cargo / hud.goal) * 100))}%`,
-                }}
-              />
-            </div>
-            <p className="font-mono text-[10px] text-stone-400 mt-2 tracking-widest">
-              {hud.docking ? <span className="text-amber-200 pulse-line">DOCKED · UPLOAD · REFUEL</span> : "DOCK AT ENDURANCE TO UPLOAD"}
-            </p>
-          </div>
-
-          <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none">
-            <div className="w-16 h-16 rounded-full border border-stone-300/20" />
-            <div className="absolute left-1/2 top-1/2 w-1 h-1 -translate-x-1/2 -translate-y-1/2 bg-stone-200/60 rounded-full" />
-          </div>
-
-          <div className="absolute left-1/2 top-[38%] -translate-x-1/2 flex flex-col items-center gap-1 pointer-events-none">
-            {pops.map((p) => (
-              <div key={p.id} className="fade-up font-mono text-sm tracking-[.4em]" style={{ color: p.color, textShadow: `0 0 18px ${p.color}` }}>
-                {p.text}
-              </div>
-            ))}
-          </div>
-
-          {isTouch && (
-            <button
-              className="absolute bottom-40 right-8 w-24 h-24 rounded-full border border-amber-200/50 font-mono text-[10px] tracking-[.3em] text-amber-100 active:bg-amber-200/20 z-20"
-              onPointerDown={() => engineRef.current?.setTouchThrust(true)}
-              onPointerUp={() => engineRef.current?.setTouchThrust(false)}
-              onPointerLeave={() => engineRef.current?.setTouchThrust(false)}
-            >
-              THRUST
-            </button>
-          )}
-        </>
-      )}
-
-      <div ref={reticleRef} className={`absolute left-0 top-0 pointer-events-none ${phase === "play" && !paused ? "" : "hidden"}`}>
-        <div className="-translate-x-1/2 -translate-y-1/2 relative w-7 h-7">
-          <div className="absolute left-1/2 top-0 h-2 w-px bg-amber-100/80" />
-          <div className="absolute left-1/2 bottom-0 h-2 w-px bg-amber-100/80" />
-          <div className="absolute top-1/2 left-0 w-2 h-px bg-amber-100/80" />
-          <div className="absolute top-1/2 right-0 w-2 h-px bg-amber-100/80" />
-        </div>
-      </div>
-
-      {msg && (phase === "play" || phase === "intro") && (
-        <div className="absolute bottom-6 left-1/2 -translate-x-1/2 pointer-events-none z-10 hidden md:block" style={phase === "intro" ? { bottom: "10vh" } : undefined}>
-          <TarsMessage text={msg.text} id={msg.id} />
-        </div>
-      )}
-
-      {paused && phase === "play" && (
-        <div className="absolute inset-0 bg-black/60 backdrop-blur-sm flex flex-col items-center justify-center z-20">
-          <p className="title-wide text-3xl text-stone-100">PAUSED</p>
-          <p className="font-mono text-[11px] tracking-[.3em] text-stone-400 mt-4">TIME ON EARTH IS ALSO PAUSED. LUCKY YOU.</p>
-          <div className="flex gap-4 mt-10">
-            <button className="btn-mission px-8 py-3 text-xs text-stone-100" onClick={() => engineRef.current?.setPaused(false)}>
-              RESUME
-            </button>
-            <button
-              className="btn-mission px-8 py-3 text-xs text-stone-100"
-              onClick={() => {
-                engineRef.current?.setPaused(false);
-                toOrbit();
-              }}
-            >
-              ABORT
-            </button>
-          </div>
-        </div>
-      )}
-
-      {phase === "end" && ending && <EndScreen ending={ending} onAgain={begin} onOrbit={toOrbit} />}
-
-      <div className={`absolute inset-0 bg-white pointer-events-none transition-opacity duration-[1800ms] ${flash ? "opacity-100" : "opacity-0"}`} />
+      {panel === "guide" && <FieldGuide key={guideId} initialId={guideId} progress={progress} onClose={closePanel} onMaster={onMaster} />}
+      {panel === "missions" && <MissionControl progress={progress} campaign={phase === "play" ? telemetry.getSnapshot()?.campaign : undefined} onLaunch={launch} onLearn={openGuide} onClose={closePanel} ready={ready} />}
+      {panel === "station" && telemetry.getSnapshot() && <StationService engine={engineRef} hud={telemetry.getSnapshot()!} onClose={closePanel} />}
+      {panel === "chart" && telemetry.getSnapshot() && <ExplorationChart charted={progress.chartedSectors} current={telemetry.getSnapshot()!.sector} flightCount={telemetry.getSnapshot()!.campaign.stats.sectorsCharted} onClose={closePanel} onPlot={plotSector} />}
+      {panel === "nasa" && <NasaLive onClose={closePanel} />}
+      {panel === "howto" && <HowToPlay onClose={closePanel} />}
+      {panel === "settings" && <Settings quality={preferences.quality} setQuality={changeQuality} humor={preferences.humor} setHumor={changeHumor} onClose={closePanel} playing={phase === "play"} />}
     </div>
   );
 }
 
-function Intro({ onBegin }: { onBegin: () => void }) {
-  return (
-    <div className="absolute inset-0 flex flex-col pointer-events-none">
-      <nav className="mt-[7vh] px-8 md:px-14 py-6 flex items-center justify-between fade-up" style={{ animationDelay: "1.2s" }}>
-        <div className="font-mono text-[10px] tracking-[.4em] text-stone-400">
-          NASA · LAZARUS <span className="text-stone-600">/</span> MISSION 02
-        </div>
-        <div className="hidden md:flex gap-10 font-mono text-[10px] tracking-[.4em] text-stone-500 mr-28">
-          <span>GARGANTUA · 100M M☉</span>
-          <span>SPIN 0.999999 c</span>
-        </div>
-      </nav>
-
-      <div className="flex-1 flex flex-col items-center justify-center text-center px-6">
-        <p className="font-mono text-[10px] md:text-[11px] tracking-[.6em] text-amber-200/70 fade-up" style={{ animationDelay: "0.6s" }}>
-          MANKIND WAS BORN ON EARTH · IT WAS NEVER MEANT TO DIE HERE
-        </p>
-        <h1 className="letter-in title-wide text-[11vw] md:text-[7.2vw] leading-none text-stone-100 mt-6 pl-[0.55em]" style={{ textShadow: "0 0 60px rgba(255,190,120,.25)" }}>
-          GARGANTUA
-        </h1>
-        <p className="font-display font-light tracking-[.8em] text-[11px] md:text-sm text-stone-300 mt-6 pl-[.8em] fade-up" style={{ animationDelay: "1.8s" }}>
-          A GRAVITY ODYSSEY
-        </p>
-
-        <button
-          onClick={onBegin}
-          className="btn-mission pointer-events-auto mt-14 px-12 py-4 text-[11px] text-stone-100 fade-up bg-black/20"
-          style={{ animationDelay: "2.4s" }}
-        >
-          BEGIN MISSION
-        </button>
-        <p className="font-mono italic text-[11px] text-stone-500 mt-6 fade-up" style={{ animationDelay: "3s" }}>
-          "Do not go gentle into that good night."
-        </p>
-      </div>
-
-      <div className="mb-[7vh] px-8 md:px-14 pb-6 grid md:grid-cols-3 gap-6 md:gap-14 fade-up" style={{ animationDelay: "3.2s" }}>
-        {[
-          {
-            k: "01 · OBJECTIVE",
-            t: "Harvest quantum data orbiting Gargantua. The closer to the horizon, the richer the signal. Dock at Endurance to upload 150 quanta.",
-          },
-          {
-            k: "02 · RELATIVITY",
-            t: "Gravity bends time. Near the horizon one hour costs years on Earth. Murph is waiting. You have 60 Earth years.",
-          },
-          {
-            k: "03 · FLIGHT",
-            t: "Mouse steers · W / Space / Click thrust · Shift boost · S retro · A/D roll · Esc pause. Or cross the horizon… and see what lies beyond.",
-          },
-        ].map((c) => (
-          <div key={c.k} className="hidden md:block border-t border-stone-500/30 pt-4">
-            <p className="font-mono text-[10px] tracking-[.4em] text-amber-200/80">{c.k}</p>
-            <p className="text-[13px] font-light leading-relaxed text-stone-300 mt-3">{c.t}</p>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
+function EndScreen({ ending, mastered, onAgain, onGuide, onOrbit }: {
+  ending: Ending; mastered: number; onAgain: () => void; onGuide: () => void; onOrbit: () => void;
+}) {
+  const success = ending.reason === "win";
+  return <main className="end-composition">
+    <p className="micro-label reveal">{success ? "Expedition complete / A little more understood" : ending.reason === "tesseract" ? "Beyond the horizon / A fictional epilogue" : ending.reason === "wreck" ? "Hull breach / Expedition ended" : "Expedition log / Deadline reached"}</p>
+    <h1 className="reveal" style={{ animationDelay: ".2s" }}>{success ? <>Knowledge<br />brought home.</> : ending.reason === "tesseract" ? <>The<br />tesseract.</> : ending.reason === "wreck" ? <>The debris<br />found you.</> : <>The universe<br />can wait.</>}</h1>
+    <p className="end-description reveal" style={{ animationDelay: ".4s" }}>{success ? "Every chapter flown. One remarkable journey. You came back with research, discoveries, and a new way of seeing the stars." : ending.reason === "tesseract" ? "A four-dimensional cube becomes visible through a three-dimensional projection. This room is a story, not a scientific prediction of a black-hole interior." : ending.reason === "wreck" ? "Hull integrity reached zero. Real mission planners track every close approach precisely because relative speed, not distance alone, decides the outcome. Dock at Endurance earlier to repair." : "The accelerated scenario clock ran out, but every concept you learned is saved. Start another flight with a clearer course."}</p>
+    <div className="end-results reveal" style={{ animationDelay: ".6s" }}><div><span className="micro-label">Expedition points</span><strong>{ending.points.toLocaleString()}</strong></div><div><span className="micro-label">Missions complete</span><strong>{ending.completed}<small> / {MISSIONS.length}</small></strong></div><div><span className="micro-label">Subjects mastered</span><strong>{mastered}<small> / {LESSONS.length}</small></strong></div></div>
+    <div className="end-actions reveal" style={{ animationDelay: ".8s" }}><button className="primary-button" onClick={onAgain}>Fly again <span>/</span></button><button className="text-button" onClick={onGuide}>Keep learning <span>+</span></button><button className="text-button" onClick={onOrbit}>Return to orbit</button></div>
+  </main>;
 }
-
-function EndScreen({ ending, onAgain, onOrbit }: { ending: NonNullable<Ending>; onAgain: () => void; onOrbit: () => void }) {
-  const success = ending.score >= 150;
-  let kicker = "";
-  let title = "";
-  let body = "";
-  if (ending.reason === "tesseract") {
-    kicker = "BEYOND THE EVENT HORIZON";
-    title = "THE TESSERACT";
-    body = success
-      ? `Time is a dimension here. You found the bookshelf, the watch, the second hand, and pushed ${ending.score} quanta of data through gravity itself. Murph understood. Humanity lifts off.`
-      : `Inside the five-dimensional library you reached across time, but only ${ending.score} quanta made it through. The signal was too faint. Murph waits at the bookshelf, listening.`;
-  } else if (ending.reason === "win") {
-    kicker = "PLAN A · COMPLETE";
-    title = "WE ARE THE BRIDGE";
-    body = `${ending.score} quanta uploaded with ${ending.years.toFixed(1)} Earth years elapsed. The gravity equation is solved. Colonies rise from Earth's dust. Murph will see the stars.`;
-  } else {
-    kicker = "60 YEARS HAVE PASSED ON EARTH";
-    title = "MURPH IS GONE";
-    body = `Time was the one resource we couldn't refuel. ${ending.score} quanta reached home, and it was not enough. Somewhere, a message from a father plays on an empty screen.`;
-  }
-  return (
-    <div className={`absolute inset-0 flex flex-col items-center justify-center text-center px-6 ${ending.reason === "tesseract" ? "" : "bg-black/30"}`}>
-      <p className="font-mono text-[11px] tracking-[.5em] text-amber-200/80 fade-up" style={{ animationDelay: "1.2s" }}>
-        {kicker}
-      </p>
-      <h2 className="letter-in title-wide text-[8vw] md:text-[5vw] text-stone-100 mt-5 pl-[.55em]" style={{ animationDelay: "1.4s" }}>
-        {title}
-      </h2>
-      <p className="max-w-xl text-sm md:text-[15px] font-light leading-relaxed text-stone-300 mt-8 fade-up" style={{ animationDelay: "2.6s" }}>
-        {body}
-      </p>
-      <div className="flex gap-10 mt-10 font-mono fade-up" style={{ animationDelay: "3.2s" }}>
-        <div>
-          <p className="text-[9px] tracking-[.4em] text-stone-500">QUANTA</p>
-          <p className="text-2xl text-stone-100">{ending.score}</p>
-        </div>
-        <div>
-          <p className="text-[9px] tracking-[.4em] text-stone-500">EARTH YEARS</p>
-          <p className="text-2xl text-stone-100">{ending.years.toFixed(1)}</p>
-        </div>
-      </div>
-      <div className="flex flex-wrap justify-center gap-4 mt-12 fade-up" style={{ animationDelay: "3.8s" }}>
-        <button className="btn-mission px-10 py-4 text-[11px] text-stone-100 bg-black/20" onClick={onAgain}>
-          FLY AGAIN
-        </button>
-        <button className="btn-mission px-10 py-4 text-[11px] text-stone-100 bg-black/20" onClick={onOrbit}>
-          RETURN TO ORBIT
-        </button>
-      </div>
-    </div>
-  );
+function StationButton({ telemetry, onOpen, hidden }: { telemetry: ReturnType<typeof createTelemetry>; onOpen: () => void; hidden: boolean }) {
+  const hud = useSyncExternalStore(telemetry.subscribe, telemetry.getSnapshot, telemetry.getSnapshot);
+  if (!hud?.docking || hidden) return null;
+  return <button className="station-callout" onClick={onOpen}><span className="station-callout__dot" />Docked at Endurance<strong>Open station services <kbd>H</kbd></strong></button>;
 }
