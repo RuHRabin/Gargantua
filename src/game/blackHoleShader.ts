@@ -1,7 +1,8 @@
-// Raymarched Schwarzschild lensing with an accretion disk.
-// Units: Schwarzschild radius rs = 1. Black hole at origin, disk in XZ plane.
+// Gargantua: raymarched Schwarzschild lensing (rs = 1) with a baked, animated accretion disk.
+// The expensive procedural noise was moved to CPU-baked textures, and the integrator step
+// count is driven by a uniform so quality can scale with the measured frame budget.
 
-export const bhVertex = /* glsl */ `
+export const quadVertex = /* glsl */ `
 varying vec2 vUv;
 void main() {
   vUv = uv;
@@ -11,99 +12,45 @@ void main() {
 
 export const bhFragment = /* glsl */ `
 precision highp float;
-uniform vec2 uRes;
+
 uniform float uTime;
 uniform vec3 uCamPos;
 uniform mat4 uCamMat;
 uniform float uTanHalfFov;
 uniform float uAspect;
-uniform float uWarp;      // 0..1 extra distortion/flash (near horizon / events)
-uniform float uFade;      // global fade
+uniform float uSteps;
+uniform float uDiskBoost;
+uniform sampler2D uStars;
+uniform sampler2D uDisk;
 varying vec2 vUv;
 
-float hash13(vec3 p) {
-  p = fract(p * 0.1031);
-  p += dot(p, p.zyx + 31.32);
-  return fract((p.x + p.y) * p.z);
+const float INV_TAU = 0.15915494;
+const float INV_PI = 0.31830989;
+const float INNER = 2.6;
+const float OUTER = 14.0;
+
+vec3 sampleSky(vec3 d) {
+  vec2 uv = vec2(atan(d.z, d.x) * INV_TAU + 0.5, acos(clamp(d.y, -1.0, 1.0)) * INV_PI);
+  return texture2D(uStars, uv).rgb;
 }
 
-float noise(vec3 x) {
-  vec3 i = floor(x);
-  vec3 f = fract(x);
-  f = f * f * (3.0 - 2.0 * f);
-  return mix(mix(mix(hash13(i + vec3(0,0,0)), hash13(i + vec3(1,0,0)), f.x),
-                 mix(hash13(i + vec3(0,1,0)), hash13(i + vec3(1,1,0)), f.x), f.y),
-             mix(mix(hash13(i + vec3(0,0,1)), hash13(i + vec3(1,0,1)), f.x),
-                 mix(hash13(i + vec3(0,1,1)), hash13(i + vec3(1,1,1)), f.x), f.y), f.z);
-}
-
-float fbm(vec3 p) {
-  float v = 0.0;
-  float a = 0.5;
-  for (int i = 0; i < 5; i++) {
-    v += a * noise(p);
-    p = p * 2.03 + vec3(1.7, 9.2, 3.1);
-    a *= 0.5;
-  }
-  return v;
-}
-
-vec3 starLayer(vec3 dir, float scale, float thresh) {
-  vec3 p = dir * scale;
-  vec3 id = floor(p);
-  vec3 f = fract(p) - 0.5;
-  float h = hash13(id);
-  if (h < thresh) return vec3(0.0);
-  vec3 off = vec3(hash13(id + 11.1), hash13(id + 23.7), hash13(id + 37.3)) - 0.5;
-  float d = length(f - off * 0.6);
-  float b = smoothstep(0.12, 0.0, d) * (h - thresh) / (1.0 - thresh);
-  float tw = 0.7 + 0.3 * sin(uTime * (1.0 + h * 4.0) + h * 50.0);
-  vec3 tint = mix(vec3(0.75, 0.85, 1.0), vec3(1.0, 0.85, 0.65), hash13(id + 5.0));
-  return tint * b * tw * 3.0;
-}
-
-vec3 sky(vec3 dir) {
-  vec3 col = vec3(0.0);
-  col += starLayer(dir, 90.0, 0.94);
-  col += starLayer(dir, 220.0, 0.965) * 0.8;
-  col += starLayer(dir, 500.0, 0.975) * 0.5;
-  // galactic band
-  vec3 bandAxis = normalize(vec3(0.3, 1.0, 0.25));
-  float band = 1.0 - abs(dot(dir, bandAxis));
-  band = pow(band, 6.0);
-  float neb = fbm(dir * 3.0 + vec3(0.0, uTime * 0.005, 0.0));
-  float neb2 = fbm(dir * 7.0 - 3.0);
-  col += vec3(0.32, 0.24, 0.18) * band * neb * 0.35;
-  col += vec3(0.10, 0.12, 0.2) * pow(neb2, 3.0) * 0.6;
-  col += starLayer(dir, 900.0, 0.9) * band * 0.6;
-  return col;
-}
-
-vec4 disk(vec3 p, float r, vec3 rayDir) {
-  float inner = 2.6;
-  float outer = 15.0;
-  if (r < inner || r > outer) return vec4(0.0);
+vec4 sampleDisk(vec3 p, float r, vec3 rd) {
+  if (r < INNER || r > OUTER) return vec4(0.0);
   float ang = atan(p.z, p.x);
-  float omega = 2.2 / pow(r, 1.5);
-  float rot = ang + uTime * omega;
-  vec2 q = vec2(cos(rot), sin(rot)) * r;
-  float n = fbm(vec3(q * 0.9, r * 0.35 + uTime * 0.02));
-  float streak = fbm(vec3(r * 3.2, cos(rot) * 1.5, sin(rot) * 1.5));
-  float rings = 0.55 + 0.45 * sin(r * 7.0 + n * 6.0);
-  float edge = smoothstep(inner, inner + 0.5, r) * (1.0 - smoothstep(7.0, outer, r));
-  float dens = edge * (0.35 + 0.9 * n) * (0.5 + 0.6 * streak) * rings;
-  float temp = clamp(pow(3.2 / r, 1.35), 0.0, 1.6);
-  // mild relativistic beaming
+  float omega = 2.4 / (r * sqrt(r));
+  float u = (ang + uTime * omega) * INV_TAU;
+  float v = (r - INNER) / (OUTER - INNER);
+  float dens = texture2D(uDisk, vec2(u, v)).r;
+  dens *= smoothstep(INNER, INNER + 0.55, r) * (1.0 - smoothstep(8.5, OUTER, r));
+  if (dens < 0.004) return vec4(0.0);
+
+  float temp = clamp(pow(3.0 / r, 1.3), 0.0, 1.5);
   vec3 tang = normalize(vec3(-p.z, 0.0, p.x));
-  float beam = 1.0 + 0.55 * dot(tang, -normalize(rayDir));
-  vec3 hot = vec3(1.0, 0.93, 0.82);
-  vec3 warm = vec3(1.0, 0.58, 0.22);
-  vec3 cool = vec3(0.55, 0.22, 0.07);
-  vec3 col = mix(cool, warm, smoothstep(0.15, 0.6, temp));
-  col = mix(col, hot, smoothstep(0.6, 1.2, temp));
-  col *= dens * temp * 3.2 * beam;
-  float a = clamp(dens * 1.4, 0.0, 1.0);
-  return vec4(col, a);
+  float beam = 1.0 + 0.6 * dot(tang, -rd);           // relativistic beaming
+  vec3 col = mix(vec3(0.55, 0.2, 0.06), vec3(1.0, 0.56, 0.18), smoothstep(0.1, 0.55, temp));
+  col = mix(col, vec3(1.0, 0.94, 0.86), smoothstep(0.55, 1.15, temp));
+  col *= dens * temp * 3.6 * beam * uDiskBoost;
+  return vec4(col, clamp(dens * 1.5, 0.0, 1.0));
 }
 
 vec3 aces(vec3 x) {
@@ -115,56 +62,126 @@ void main() {
   vec2 uv = vUv * 2.0 - 1.0;
   vec3 rdCam = normalize(vec3(uv.x * uTanHalfFov * uAspect, uv.y * uTanHalfFov, -1.0));
   vec3 rd = normalize((uCamMat * vec4(rdCam, 0.0)).xyz);
+
   vec3 pos = uCamPos;
   vec3 vel = rd;
   vec3 hv = cross(pos, vel);
   float h2 = dot(hv, hv);
 
+  // Skip the numerical solver for distant rays that cannot approach the disk.
+  // Weak lensing on these peripheral rays is intentionally approximated away.
+  float camR2 = dot(pos, pos);
+  float toward = -dot(pos, rd);
+  float impact2 = max(0.0, camR2 - toward * toward);
+  if (camR2 > 576.0 && (toward < 0.0 || impact2 > 484.0)) {
+    gl_FragColor = vec4(aces(sampleSky(rd) * 1.12), 1.0);
+    return;
+  }
+  if (camR2 > 900.0 && toward > 0.0 && impact2 < 900.0) {
+    float entry = max(0.0, toward - sqrt(900.0 - impact2));
+    pos += rd * entry;
+  }
+
   vec3 acc = vec3(0.0);
   float alpha = 0.0;
-  bool captured = false;
   float minR = 1e5;
+  bool captured = false;
 
-  for (int i = 0; i < 260; i++) {
-    float r = length(pos);
+  for (int i = 0; i < 300; i++) {
+    if (float(i) >= uSteps) break;
+    float r2 = dot(pos, pos);
+    float r = sqrt(r2);
     minR = min(minR, r);
-    float dt = clamp(0.07 * r, 0.015, 2.5);
+    float dt = clamp(0.075 * r, 0.02, 2.6);
     vec3 prev = pos;
-    vec3 a = -1.5 * h2 * pos / pow(r, 5.0);
-    vel += a * dt;
+    vel += (-1.5 * h2 * pos / (r2 * r2 * r)) * dt;
     pos += vel * dt;
+
     float nr = length(pos);
     if (nr < 1.0) { captured = true; break; }
     if (prev.y * pos.y < 0.0) {
-      float t = prev.y / (prev.y - pos.y);
-      vec3 hit = mix(prev, pos, t);
-      float hr = length(hit.xz);
-      vec4 d = disk(hit, hr, vel);
+      vec3 hit = mix(prev, pos, prev.y / (prev.y - pos.y));
+      vec4 d = sampleDisk(hit, length(hit.xz), normalize(vel));
       acc += d.rgb * (1.0 - alpha);
       alpha += d.a * (1.0 - alpha);
-      if (alpha > 0.98) break;
+      if (alpha > 0.97) break;
     }
     if (nr > 90.0 && dot(pos, vel) > 0.0) break;
   }
 
-  vec3 bg = captured ? vec3(0.0) : sky(normalize(vel));
+  vec3 bg = captured ? vec3(0.0) : sampleSky(normalize(vel));
   vec3 col = acc + bg * (1.0 - alpha);
+  float ring = captured ? 0.0 : exp(-pow((minR - 1.5) * 4.0, 2.0));
+  col += vec3(1.0, 0.76, 0.5) * ring * 0.38;
 
-  // photon ring glow
-  float ring = exp(-pow((minR - 1.5) * 4.0, 2.0)) * (captured ? 0.0 : 1.0);
-  col += vec3(1.0, 0.75, 0.5) * ring * 0.35;
+  gl_FragColor = vec4(aces(col * 1.12), 1.0);
+}
+`;
 
-  // event pulses
-  col += vec3(1.0, 0.6, 0.3) * uWarp * 0.15 * (1.0 - length(uv) * 0.5);
+// Full-resolution finishing pass: the lensing buffer is upscaled here, so grain,
+// vignette and chromatic aberration all stay crisp even at low render scale.
+export const compositeFragment = /* glsl */ `
+precision highp float;
+uniform sampler2D uTex;
+uniform float uTime;
+uniform float uAspect;
+uniform float uWarp;
+uniform float uFade;
+varying vec2 vUv;
 
-  col = aces(col * 1.1);
-  // vignette
-  float vig = smoothstep(1.6, 0.35, length(uv * vec2(uAspect * 0.8, 1.0)));
-  col *= mix(0.35, 1.0, vig);
-  // film grain
-  float g = hash13(vec3(gl_FragCoord.xy, uTime * 60.0)) - 0.5;
-  col += g * 0.035;
-  col = pow(col, vec3(0.95));
+float hash(vec2 p) {
+  return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+}
+
+void main() {
+  vec2 uv = vUv;
+  vec2 c = uv - 0.5;
+  float r2 = dot(c, c);
+  float ab = (0.0016 + uWarp * 0.006) * r2;
+  vec3 col;
+  col.r = texture2D(uTex, uv + c * ab).r;
+  col.g = texture2D(uTex, uv).g;
+  col.b = texture2D(uTex, uv - c * ab).b;
+
+  col += vec3(1.0, 0.6, 0.3) * uWarp * 0.14 * (1.0 - length(c) * 0.9);
+  float vig = 1.0 - smoothstep(0.3, 1.25, length(c * vec2(uAspect * 0.78, 1.0)) * 1.35);
+  col *= mix(0.34, 1.0, vig);
+  col += (hash(gl_FragCoord.xy + fract(uTime) * 311.0) - 0.5) * 0.035;
   gl_FragColor = vec4(col * uFade, 1.0);
+}
+`;
+
+export const wormholeFragment = /* glsl */ `
+precision highp float;
+uniform sampler2D uStars;
+uniform float uTime;
+varying vec3 vNormalW;
+varying vec3 vViewDirW;
+
+const float INV_TAU = 0.15915494;
+const float INV_PI = 0.31830989;
+
+void main() {
+  vec3 n = normalize(vNormalW);
+  vec3 v = normalize(vViewDirW);
+  float f = pow(1.0 - abs(dot(n, v)), 2.2);
+  vec3 d = normalize(refract(-v, n, 0.7) + 0.08 * vec3(sin(uTime * 0.6), cos(uTime * 0.5), sin(uTime * 0.4)));
+  float a = atan(d.z, d.x) + uTime * 0.22 + f * 2.4;
+  vec2 uv = vec2(a * INV_TAU + 0.5, acos(clamp(d.y, -1.0, 1.0)) * INV_PI);
+  vec3 col = texture2D(uStars, uv).rgb * 1.7;
+  col += vec3(0.42, 0.68, 1.0) * f * 1.5;
+  col += vec3(0.2, 0.42, 0.75) * (0.5 + 0.5 * sin(uTime * 2.0 + f * 9.0)) * 0.18;
+  gl_FragColor = vec4(col, 1.0);
+}
+`;
+
+export const wormholeVertex = /* glsl */ `
+varying vec3 vNormalW;
+varying vec3 vViewDirW;
+void main() {
+  vec4 wp = modelMatrix * vec4(position, 1.0);
+  vNormalW = normalize(mat3(modelMatrix) * normal);
+  vViewDirW = cameraPosition - wp.xyz;
+  gl_Position = projectionMatrix * viewMatrix * wp;
 }
 `;

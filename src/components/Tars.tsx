@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { memo, useEffect, useState } from "react";
 
 export function TarsIcon({ active }: { active: boolean }) {
   return (
@@ -18,26 +18,26 @@ export function TarsIcon({ active }: { active: boolean }) {
   );
 }
 
-export function TarsMessage({ text, id }: { text: string; id: number }) {
+export const TarsMessage = memo(function TarsMessage({ text, id }: { text: string; id: number }) {
   const [shown, setShown] = useState("");
   useEffect(() => {
     setShown("");
     let i = 0;
     const iv = setInterval(() => {
-      i++;
+      i += 2;
       setShown(text.slice(0, i));
       if (i >= text.length) clearInterval(iv);
-    }, 18);
+    }, 40);
     return () => clearInterval(iv);
   }, [text, id]);
   const typing = shown.length < text.length;
   return (
-    <div className="hud-panel fade-up flex items-center gap-4 px-5 py-3 max-w-xl">
+    <div key={id} className="hud-panel fade-up flex items-center gap-4 px-5 py-3 max-w-xl">
       <TarsIcon active={typing} />
       <p className="font-mono text-[12px] leading-relaxed tracking-wide text-stone-200">
         {shown}
-        <span className="pulse-line">▍</span>
+        <span className="pulse-line" aria-hidden="true">|</span>
       </p>
     </div>
   );
-}
+});
