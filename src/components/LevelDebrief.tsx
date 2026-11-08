@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { LevelResult } from "../game/campaign";
 
 function Star({ lit, delay }: { lit: boolean; delay: number }) {
@@ -39,6 +39,9 @@ export function LevelDebrief({ result, campaignComplete, bestStars, onContinue, 
   const minutes = Math.floor(result.seconds / 60);
   const seconds = Math.round(result.seconds % 60);
   const newBest = result.stars > bestStars;
+  const continueRef = useRef<HTMLButtonElement>(null);
+  // Same keyboard focus as autoFocus, but without scrolling a short (phone landscape) card past its heading.
+  useEffect(() => { continueRef.current?.focus({ preventScroll: true }); }, []);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -83,7 +86,7 @@ export function LevelDebrief({ result, campaignComplete, bestStars, onContinue, 
         </div>
 
         <div className="debrief-actions reveal" style={{ animationDelay: "1.7s" }}>
-          <button className="primary-button debrief-continue" onClick={onContinue} autoFocus>
+          <button className="primary-button debrief-continue" onClick={onContinue} ref={continueRef}>
             {campaignComplete ? "See the expedition results" : `Fly level ${String(result.level + 1).padStart(2, "0")}: ${result.nextTitle}`}
             <span aria-hidden="true">/</span>
           </button>

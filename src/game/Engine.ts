@@ -6,6 +6,7 @@ import { Campaign, MISSIONS, type CampaignSnapshot, type LevelResult } from "./c
 import { HazardField, type HazardEvent } from "./hazards";
 import { BEARING_COUNT, RING_EDGES, SECTOR_COUNT, locateSector, sectorId, type SectorLocation } from "./exploration";
 import { LESSON_BY_ID } from "./learning";
+import { TiltController, type TiltSensitivity, type TiltStatus } from "./tilt";
 import {
   makeDecalTexture,
   makeDiskTexture,
@@ -53,6 +54,8 @@ export interface HudState {
   chartedSectors: number;
   totalSectors: number;
   stationCredits: number;
+  tilt: boolean;
+  tiltSupported: boolean;
   target: string;
   targetDistance: number;
   autopilot: boolean;
@@ -344,6 +347,7 @@ export class Engine {
   keys: Record<string, boolean> = {};
   mouse = new THREE.Vector2();
   mouseDown = false;
+  tilt = new TiltController();
   touchThrust = false;
   touchScoop = false;
 
@@ -1105,6 +1109,7 @@ export class Engine {
   };
   onPointerMove = (e: PointerEvent) => {
     if (e.pointerType === "touch" && e.buttons === 0) return;
+    if (e.pointerType === "touch" && this.tilt.active) { this.mouse.set(0, 0); return; }
     if ((e.target as HTMLElement)?.closest("button, input, select, .flight-instrument, .main-navigation, [role=dialog]")) {
       this.mouse.set(0, 0);
       return;
@@ -1151,6 +1156,16 @@ export class Engine {
   setTouchScoop(v: boolean) {
     this.touchScoop = v;
   }
+  /** Turn tilt steering on or off. Call directly from a tap: iOS shows its motion-permission prompt only then. */
+  setTilt(on: boolean): Promise<TiltStatus> {
+    if (!on) { this.tilt.stop(); return Promise.resolve("off"); }
+    return this.tilt.start();
+  }
+  setTiltOptions(sensitivity: TiltSensitivity, invertY: boolean) {
+    this.tilt.sensitivity = sensitivity;
+    this.tilt.invertY = invertY;
+  }
+  recenterTilt() { this.tilt.recenter(); }
   setTouchConvert(v: boolean) { this.touchConvert = v; }
   setTouchRetro(v: boolean) { this.touchRetro = v; }
   clearInput() {
@@ -1167,6 +1182,7 @@ export class Engine {
     if (this.paused === p) return;
     this.paused = p;
     this.clearInput();
+    if (!p) this.tilt.recenter(); // the phone may have moved while paused
     this.visualDirty = true;
     this.audio.setSuspended(p);
     this.onEvent({ type: "pause", paused: p });
@@ -1375,6 +1391,7 @@ export class Engine {
     this.mode = "play";
     this.paused = false;
     this.clearInput();
+    this.tilt.recenter();
     this.campaign.reset(level, this.time);
     this.discoveries.clear();
     this.flightSectors.clear();
@@ -1699,8 +1716,12 @@ export class Engine {
     const cruiseSpeed = Math.min(3.5, Math.sqrt(Math.max(0, this.targetDistance - stopDistance)) * 1.6);
     const dz = (v: number) => (Math.abs(v) < 0.06 ? 0 : (v - Math.sign(v) * 0.06) / 0.94);
     const agility = this.arrays ? 0.7 : 1; // extended arrays make her sluggish
-    let yaw = -dz(this.mouse.x) * 1.7 * agility;
-    let pitch = -dz(this.mouse.y) * 1.35 * agility;
+    // Tilt adds to the pointer input, so mouse, finger and keys behave exactly as before when tilt is off.
+    this.tilt.update(dt);
+    const steerX = this.tilt.active ? THREE.MathUtils.clamp(this.mouse.x + this.tilt.x, -1, 1) : this.mouse.x;
+    const steerY = this.tilt.active ? THREE.MathUtils.clamp(this.mouse.y + this.tilt.y, -1, 1) : this.mouse.y;
+    let yaw = -dz(steerX) * 1.7 * agility;
+    let pitch = -dz(steerY) * 1.35 * agility;
     if (k.ArrowLeft) yaw += 1.4 * agility;
     if (k.ArrowRight) yaw -= 1.4 * agility;
     if (k.ArrowUp) pitch += 1.1 * agility;
@@ -2267,6 +2288,8 @@ export class Engine {
       chartedSectors: this.chartedSectors.size,
       totalSectors: SECTOR_COUNT,
       stationCredits: this.campaign.stationCredits,
+      tilt: this.tilt.active,
+      tiltSupported: TiltController.supported(),
     });
   }
 
@@ -2358,6 +2381,7 @@ export class Engine {
   dispose() {
     if (this.disposed) return;
     this.disposed = true;
+    this.tilt.stop();
     cancelAnimationFrame(this.raf);
     window.removeEventListener("resize", this.resize);
     window.removeEventListener("keydown", this.onKeyDown);

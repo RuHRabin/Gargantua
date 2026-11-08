@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { Engine, EngineEvent, QualityMode } from "./game/Engine";
+import type { TiltSensitivity } from "./game/tilt";
 import { createTelemetry } from "./game/telemetry";
 import { loadProgress, saveProgress, type SavedProgress } from "./game/progress";
 import { LESSON_BY_ID, LESSONS } from "./game/learning";
@@ -32,8 +33,11 @@ function readPreferences() {
         : window.matchMedia("(pointer: coarse)").matches ? "eco" : "auto") as QualityMode,
       humor: typeof value.humor === "number" && Number.isFinite(value.humor) ? Math.max(0, Math.min(100, value.humor)) : 75,
       muted: value.muted === true,
+      tilt: value.tilt === true,
+      tiltSensitivity: ([1, 2, 3].includes(value.tiltSensitivity) ? value.tiltSensitivity : 2) as TiltSensitivity,
+      tiltInvert: value.tiltInvert === true,
     };
-  } catch { return { quality: "auto" as QualityMode, humor: 75, muted: false }; }
+  } catch { return { quality: "auto" as QualityMode, humor: 75, muted: false, tilt: false, tiltSensitivity: 2 as TiltSensitivity, tiltInvert: false }; }
 }
 
 export default function App() {
@@ -152,6 +156,7 @@ export default function App() {
           engine.setQuality(preferencesRef.current.quality);
           engine.setHumor(preferencesRef.current.humor);
           engine.setMuted(preferencesRef.current.muted);
+          engine.setTiltOptions(preferencesRef.current.tiltSensitivity, preferencesRef.current.tiltInvert);
           engine.setChartedSectors(progressRef.current.chartedSectors);
           if (panelRef.current) engine.setPaused(true);
           void engine.ready.then(() => { if (!cancelled) setReady(true); }).catch(() => {
@@ -168,6 +173,7 @@ export default function App() {
   useEffect(() => {
     engineRef.current?.setHumor(preferences.humor);
     engineRef.current?.setMuted(preferences.muted);
+    engineRef.current?.setTiltOptions(preferences.tiltSensitivity, preferences.tiltInvert);
     try { localStorage.setItem("gargantua.preferences", JSON.stringify(preferences)); } catch { /* Storage is optional. */ }
   }, [preferences]);
 
@@ -253,6 +259,10 @@ export default function App() {
     timerRef.current.forEach(clearTimeout); timerRef.current.clear();
     panelRef.current = null; setPanel(null); resumeAfterPanel.current = false;
     engineRef.current.initAudio(); engineRef.current.toIntro();
+    if (preferencesRef.current.tilt && !engineRef.current.tilt.active) {
+      // Re-arm saved tilt steering from this tap (iOS needs a fresh permission each session).
+      void engineRef.current.setTilt(true).then((status) => { if (status !== "on") setPreferences((previous) => ({ ...previous, tilt: false })); });
+    }
     setPaused(false); setPhase("countdown"); phaseRef.current = "countdown";
     setCountdown(3); setEnding(null); setDebrief(null); setToasts([]); setDiscovery(null); setMessage(null); setFlash(false);
     later(() => setCountdown(2), 1000);
@@ -303,6 +313,19 @@ export default function App() {
     engineRef.current?.setQuality(quality);
     setPreferences((previous) => ({ ...previous, quality }));
   }, []);
+  // Runs synchronously inside the tap: iOS only shows its motion-permission prompt from a user gesture.
+  const changeTilt = useCallback((on: boolean) => {
+    const engine = engineRef.current;
+    if (!engine) return;
+    void engine.setTilt(on).then((status) => {
+      setPreferences((previous) => ({ ...previous, tilt: status === "on" }));
+      if (status === "on") pushToast("Tilt steering on / lean the phone to steer", "#a7c9b4");
+      else if (status === "denied") pushToast("Motion access was declined. Allow it in your browser settings to steer by tilt.", "#e0897a");
+      else if (status === "unsupported") pushToast("No motion sensor found on this device", "#e0897a");
+    });
+  }, [pushToast]);
+  const changeTiltSensitivity = useCallback((tiltSensitivity: TiltSensitivity) => setPreferences((previous) => ({ ...previous, tiltSensitivity })), []);
+  const changeTiltInvert = useCallback((tiltInvert: boolean) => setPreferences((previous) => ({ ...previous, tiltInvert })), []);
   const changeHumor = useCallback((humor: number) => setPreferences((previous) => ({ ...previous, humor })), []);
 
   return (
@@ -322,15 +345,10 @@ export default function App() {
       {phase === "intro" && <Intro onBegin={begin} onGuide={showGuide} ready={ready} error={error} level={progress.completedLevel >= MISSIONS.length ? 1 : progress.unlockedLevel} />}
       {phase === "countdown" && <div className="countdown-composition"><p className="micro-label">Gargantua / Instruments ready</p><div key={countdown} className="countdown-number">{countdown || "GO"}</div><p className="countdown-note">Your next discovery is out there.</p></div>}
       {phase === "play" && <>
-        <FlightHud telemetry={telemetry} engine={engineRef} onMissions={showMissions} onGuide={showClockLesson} />
+        <FlightHud telemetry={telemetry} engine={engineRef} onMissions={showMissions} onGuide={showClockLesson} onToggleTilt={changeTilt} />
         {message && <div className="tars-comms"><TarsMessage text={message.text} id={message.id} /></div>}
         {discovery && <button className="discovery-notice" onClick={() => openGuide(discovery)}><span className="micro-label">Field note discovered / +50 pts</span><strong>{LESSON_BY_ID.get(discovery)?.name}</strong><span className="discovery-learn">Learn the idea <span aria-hidden="true">+</span></span></button>}
         <StationButton telemetry={telemetry} onOpen={showStation} hidden={!!panel || !!debrief} />
-        <div className="mobile-flight-controls">
-          <button onPointerDown={(event) => { event.currentTarget.setPointerCapture(event.pointerId); engineRef.current?.setTouchThrust(true); }} onPointerUp={() => engineRef.current?.setTouchThrust(false)} onPointerCancel={() => engineRef.current?.setTouchThrust(false)}>Thrust</button>
-          <button onPointerDown={(event) => { event.currentTarget.setPointerCapture(event.pointerId); engineRef.current?.setTouchRetro(true); }} onPointerUp={() => engineRef.current?.setTouchRetro(false)} onPointerCancel={() => engineRef.current?.setTouchRetro(false)}>Brake</button>
-          <button onPointerDown={(event) => { event.currentTarget.setPointerCapture(event.pointerId); engineRef.current?.setTouchScoop(true); }} onPointerUp={() => engineRef.current?.setTouchScoop(false)} onPointerCancel={() => engineRef.current?.setTouchScoop(false)}>Scoop</button>
-        </div>
         <div ref={reticleRef} className={`mouse-reticle ${paused || panel || debrief ? "is-hidden" : ""}`} aria-hidden="true"><span /><i /></div>
         {debrief && !panel && <LevelDebrief result={debrief.result} campaignComplete={debrief.campaignComplete} bestStars={progress.stars[debrief.result.level] ?? 0} onContinue={continueLevel} onReplay={replayLevel} onGuide={debriefGuide} />}
       </>}
@@ -346,7 +364,8 @@ export default function App() {
       {panel === "chart" && telemetry.getSnapshot() && <ExplorationChart charted={progress.chartedSectors} current={telemetry.getSnapshot()!.sector} flightCount={telemetry.getSnapshot()!.campaign.stats.sectorsCharted} onClose={closePanel} onPlot={plotSector} />}
       {panel === "nasa" && <NasaLive onClose={closePanel} />}
       {panel === "howto" && <HowToPlay onClose={closePanel} />}
-      {panel === "settings" && <Settings quality={preferences.quality} setQuality={changeQuality} humor={preferences.humor} setHumor={changeHumor} onClose={closePanel} playing={phase === "play"} />}
+      {panel === "settings" && <Settings quality={preferences.quality} setQuality={changeQuality} humor={preferences.humor} setHumor={changeHumor} onClose={closePanel} playing={phase === "play"}
+        tilt={{ enabled: preferences.tilt, sensitivity: preferences.tiltSensitivity, invert: preferences.tiltInvert, onToggle: changeTilt, onSensitivity: changeTiltSensitivity, onInvert: changeTiltInvert }} />}
     </div>
   );
 }
