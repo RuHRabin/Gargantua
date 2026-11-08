@@ -17,6 +17,7 @@ const PAGES = [
     lead: "There is no air in space. Thrust pushes you, and you keep coasting once you let go.",
     items: [
       ["Steer", "Mouse or arrow keys. On a phone, drag anywhere on the sky."],
+      ["Tilt (phones)", "Turn it on with Tilt in flight or in Settings. Lean the right edge down to turn right, tip the top away to dive."],
       ["Thrust", "W, Space or left click. On a phone, hold Thrust."],
       ["Brake", "S, or hold Brake on a phone."],
       ["Autopilot", "N flies you to the selected destination."],

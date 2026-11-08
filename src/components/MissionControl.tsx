@@ -13,7 +13,7 @@ export function MissionControl({ progress, campaign, onLaunch, onLearn, onClose,
   const locked = selected + 1 > progress.unlockedLevel;
   const active = campaign?.level === selected + 1;
   return (
-    <Dialog title="Your expedition" eyebrow="`Mission control / ${MISSIONS.length} chapters`" onClose={onClose} wide>
+    <Dialog title="Your expedition" eyebrow={`Mission control / ${MISSIONS.length} chapters`} onClose={onClose} wide>
       <div className="mission-layout">
         <aside className="mission-list">
           {MISSIONS.map((entry, index) => <button key={entry.id} className={`mission-row ${selected === index ? "selected" : ""}`} onClick={() => setSelected(index)} aria-current={selected === index ? "true" : undefined}>
