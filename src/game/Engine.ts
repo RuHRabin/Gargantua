@@ -1081,7 +1081,7 @@ export class Engine {
     const level = this.campaign.index + 1;
     if (level > MISSIONS.length) return this.end("win");
     this.campaign.beginLevel(this.time);
-    this.hazards.setLevel(level);
+    this.hazards.setLevel(level, MISSIONS[level - 1]?.hazards);
     this.hazards.setEnabled(true);
     this.yearLimit = MAX_YEARS;
     this.mode = "play";
@@ -1419,7 +1419,7 @@ export class Engine {
     this.autoRefining = false;
     this.threatDistance = Infinity;
     this.hazards.reset();
-    this.hazards.setLevel(level);
+    this.hazards.setLevel(level, MISSIONS[level - 1]?.hazards);
     // The opening tutorial stays calm; debris arrives from level two onward.
     this.hazards.setEnabled(level > 1);
     this.arrays = false;
@@ -1933,6 +1933,7 @@ export class Engine {
     for (const event of this.hazardEvents) {
       if (event.type === "destroyed") {
         this.campaign.stats.destroyed++;
+        if (event.kind === "comet") this.campaign.stats.cometsDestroyed++;
         this.campaign.levelDestroyed++;
         const earned = this.campaign.addStreakPoints(event.points);
         event.points = earned;
@@ -1957,7 +1958,17 @@ export class Engine {
         this.discover("comets");
         const mult = this.campaign.streakMultiplier;
         this.onEvent({ type: "hazard", text: `Close pass avoided +${earned}${mult > 1 ? ` · x${mult} streak` : ""}`, tone: "good" });
+      } else if (event.type === "waveIncoming") {
+        this.discover("streams");
+        this.audio.chime(50, 0.09);
+        this.onEvent({ type: "hazard", text: `Debris wave inbound / ${event.points} ${event.kind === "comet" ? "comets" : "bodies"}`, tone: "bad" });
+      } else if (event.type === "waveCleared") {
+        this.campaign.stats.wavesCleared++;
+        this.campaign.addPoints(event.points);
+        this.audio.chime(76, 0.1);
+        this.onEvent({ type: "hazard", text: `Wave cleared +${event.points}${event.points >= 160 ? " · untouched" : ""}`, tone: "good" });
       } else {
+        this.campaign.noteHit();
         this.campaign.levelHits++;
         this.campaign.levelHullLost += Math.min(this.hull, event.damage);
         if (this.campaign.streak >= 3) this.onEvent({ type: "hazard", text: `Streak of ${this.campaign.streak} broken`, tone: "bad" });

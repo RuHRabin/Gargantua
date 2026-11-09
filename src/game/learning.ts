@@ -227,4 +227,24 @@ LESSONS.push({
   quiz: { question: "How does a ground station measure a spacecraft's distance?", answers: ["By photographing it", "From the round-trip time of a radio signal", "By estimating its brightness"], correct: 1, explanation: "Radio waves travel at the speed of light, so the delay of an echoed signal gives the distance." },
 });
 
+LESSONS.push({
+  id: "streams", name: "Debris streams", category: "Objects", kicker: "Comets leave trails behind them",
+  summary: "Debris travels in a ribbon, not alone.",
+  explanation: "A comet sheds dust and small rocks along its whole orbit. Over many passes that debris spreads into a ribbon around the orbit, called a meteoroid stream. When a planet crosses the ribbon, countless grains meet the atmosphere together and we see a meteor shower. The grains in a stream travel in similar directions at similar speeds, so they arrive in a bunch from one part of the sky, which is why showers seem to radiate from a single point.",
+  inGame: "Some chapters send debris waves: a cluster of rocks from one bearing, a few seconds apart. Clear every body in a wave for a bonus, and more if none of them touches the hull. Real stream particles are mostly tiny grains; rocks this big are game license.",
+  diagram: "orbit", source: { label: "NASA / Asteroids, comets & meteors", url: "https://science.nasa.gov/solar-system/asteroids-comets-meteors/" },
+  quiz: { question: "Why does a meteor shower happen?", answers: ["Earth crosses a trail of debris left by a comet", "Stars burn out and fall toward the ground", "The Moon shakes rocks loose from the sky"], correct: 0, explanation: "A comet leaves a ribbon of dust and rock along its orbit. When Earth passes through it, the grains burn up in the atmosphere in a shower." },
+});
+
+LESSONS.push({
+  id: "tides", name: "Tidal forces", category: "Physics", kicker: "Gravity pulls harder on the near side",
+  summary: "Stretching comes from the difference in gravity, not from gravity itself.",
+  explanation: "Gravity weakens with distance, so the near side of an object is pulled harder than its far side. That difference is the tidal force: it stretches an object along the line toward the mass and squeezes it sideways. The Moon raises ocean tides this way. Near a small black hole the stretching becomes deadly well outside the horizon, but a supermassive black hole's horizon is so large that gravity changes only gently across a spacecraft there, which is why a close approach to a hole like Gargantua is plausible in the story.",
+  formula: "tidal stretch ~ 2 x G x M x L / d cubed",
+  formulaNote: "A simple estimate for an object of length L at distance d from a mass M.",
+  inGame: "Tides are not simulated: the Ranger is never torn apart. Deep dives test your clocks, your light and your nerve instead. The Interstellar-style close approach relies on this very idea.",
+  diagram: "hole", source: { label: "NASA / Anatomy of a black hole", url: "https://science.nasa.gov/universe/black-holes/anatomy/" },
+  quiz: { question: "Why are tidal forces gentler at the horizon of a supermassive black hole than a small one?", answers: ["The horizon is so large that gravity changes slowly across a ship", "Supermassive holes have weaker gravity overall", "Light cancels the tidal pull"], correct: 0, explanation: "Tidal stretch at the horizon falls as the hole's mass grows, because the horizon is much larger and gravity varies more gradually across the ship." },
+});
+
 export const LESSON_BY_ID = new Map(LESSONS.map((lesson) => [lesson.id, lesson]));

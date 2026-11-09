@@ -25,17 +25,20 @@ export function loadProgress(): SavedProgress {
     const validSectors = (value: unknown): string[] => Array.isArray(value)
       ? [...new Set(value.filter((id: unknown): id is string => typeof id === "string" && /^r[0-5]-s[0-7]$/.test(id)))]
       : [];
+    const unlocked = typeof raw.unlockedLevel === "number" && Number.isFinite(raw.unlockedLevel)
+      ? Math.max(1, Math.min(MISSIONS.length, Math.floor(raw.unlockedLevel))) : 1;
+    const completed = typeof raw.completedLevel === "number" && Number.isFinite(raw.completedLevel)
+      ? Math.max(0, Math.min(MISSIONS.length, Math.floor(raw.completedLevel))) : 0;
     return {
-      unlockedLevel: typeof raw.unlockedLevel === "number" && Number.isFinite(raw.unlockedLevel)
-        ? Math.max(1, Math.min(MISSIONS.length, Math.floor(raw.unlockedLevel))) : 1,
-      completedLevel: typeof raw.completedLevel === "number" && Number.isFinite(raw.completedLevel)
-        ? Math.max(0, Math.min(MISSIONS.length, Math.floor(raw.completedLevel))) : 0,
+      // A chapter is always open once the one before it is complete, so saves from before new chapters were added still unlock them.
+      unlockedLevel: Math.max(unlocked, Math.min(MISSIONS.length, completed + 1)),
+      completedLevel: completed,
       bestPoints: typeof raw.bestPoints === "number" && Number.isFinite(raw.bestPoints) ? Math.max(0, Math.floor(raw.bestPoints)) : 0,
       discoveries: validIds(raw.discoveries),
       mastered: validIds(raw.mastered),
       stars: raw.stars && typeof raw.stars === "object"
         ? Object.fromEntries(Object.entries(raw.stars as Record<string, unknown>)
-          .filter(([key, value]) => new RegExp(`^[1-${MISSIONS.length}]$`).test(key) && typeof value === "number" && value >= 1 && value <= 3)
+          .filter(([key, value]) => /^\d+$/.test(key) && Number(key) >= 1 && Number(key) <= MISSIONS.length && typeof value === "number" && value >= 1 && value <= 3)
           .map(([key, value]) => [key, Math.floor(value as number)]))
         : {},
       chartedSectors: validSectors(raw.chartedSectors),

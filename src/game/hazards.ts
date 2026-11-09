@@ -14,8 +14,25 @@ import * as THREE from "three";
 
 export type HazardKind = "asteroid" | "comet";
 
+/**
+ * What a chapter's traffic is made of. Every field is optional; a chapter with no profile gets the
+ * original behaviour (traffic that thickens with the level number), so older chapters fly exactly as before.
+ */
+export interface HazardProfile {
+  /** Spawn pressure. Higher means more traffic. */
+  intensity?: number;
+  /** Fraction of ordinary spawns that are comets (default 0.3). */
+  cometShare?: number;
+  /** Speed multiplier for ordinary spawns and waves (default 1). */
+  speed?: number;
+  /** Asteroid size multiplier; bigger rocks take more hits (default 1). */
+  size?: number;
+  /** Debris waves: a bunch of bodies arriving together from one bearing, like a meteor stream. */
+  wave?: { every: number; size: number; kind: "asteroid" | "comet" | "mixed"; spread?: number };
+}
+
 export interface HazardEvent {
-  type: "destroyed" | "dodged" | "hit";
+  type: "destroyed" | "dodged" | "hit" | "waveIncoming" | "waveCleared";
   kind: HazardKind;
   position: THREE.Vector3;
   points: number;
@@ -35,6 +52,8 @@ interface Hazard {
   closest: number;
   wasNear: boolean;
   counted: boolean;
+  /** Id of the debris wave this body belongs to; 0 for ordinary traffic. */
+  wave: number;
 }
 
 const MAX_ASTEROIDS = 16;
@@ -79,6 +98,13 @@ export class HazardField {
   cometGlowPositions: Float32Array;
   spawnTimer = 1.5;
   intensity = 1;
+  cometShare = 0.3;
+  speedScale = 1;
+  sizeScale = 1;
+  waveSpec: HazardProfile["wave"] = undefined;
+  waveTimer = 0;
+  private waveId = 0;
+  private waves = new Map<number, { remaining: number; hit: boolean }>();
   enabled = false;
 
   constructor(scene: THREE.Scene, glowGold: THREE.Texture, glowBlue: THREE.Texture) {
@@ -127,15 +153,20 @@ export class HazardField {
     const blank = (kind: HazardKind): Hazard => ({
       active: false, kind, pos: new THREE.Vector3(), vel: new THREE.Vector3(),
       spin: new THREE.Vector3(), rot: new THREE.Euler(), radius: 0.3, hp: 1,
-      life: 0, closest: Infinity, wasNear: false, counted: false,
+      life: 0, closest: Infinity, wasNear: false, counted: false, wave: 0,
     });
     for (let i = 0; i < MAX_ASTEROIDS; i++) this.asteroids.push(blank("asteroid"));
     for (let i = 0; i < MAX_COMETS; i++) this.comets.push(blank("comet"));
   }
 
   /** Later levels send more traffic, and more of it icy and fast. */
-  setLevel(level: number) {
-    this.intensity = 0.55 + level * 0.3;
+  setLevel(level: number, profile?: HazardProfile) {
+    this.intensity = profile?.intensity ?? 0.55 + level * 0.3;
+    this.cometShare = profile?.cometShare ?? 0.3;
+    this.speedScale = profile?.speed ?? 1;
+    this.sizeScale = profile?.size ?? 1;
+    this.waveSpec = profile?.wave;
+    this.waveTimer = this.waveSpec ? this.waveSpec.every * 0.7 : 0;
   }
 
   setEnabled(value: boolean) {
@@ -155,6 +186,8 @@ export class HazardField {
     this.asteroidMesh.count = 0;
     this.cometMesh.count = 0;
     this.spawnTimer = 2;
+    this.waves.clear();
+    if (this.waveSpec) this.waveTimer = this.waveSpec.every * 0.7;
     this.flushPoints();
   }
 
@@ -201,18 +234,81 @@ export class HazardField {
     _a.x += (Math.random() - 0.5) * 7;
     _a.y += (Math.random() - 0.5) * 4;
     _a.z += (Math.random() - 0.5) * 7;
-    const speed = kind === "comet" ? 3.4 + Math.random() * 2.2 : 1.3 + Math.random() * 1.5;
+    const speed = (kind === "comet" ? 3.4 + Math.random() * 2.2 : 1.3 + Math.random() * 1.5) * this.speedScale;
     h.vel.copy(_a).sub(h.pos).normalize().multiplyScalar(speed);
 
     h.active = true;
-    h.radius = kind === "comet" ? 0.3 : 0.34 + Math.random() * 0.5;
+    h.radius = kind === "comet" ? 0.3 : (0.34 + Math.random() * 0.5) * this.sizeScale;
     h.hp = kind === "comet" ? 1 : h.radius > 0.62 ? 3 : 2;
     h.life = kind === "comet" ? 26 : 38;
     h.closest = Infinity;
     h.wasNear = false;
     h.counted = false;
+    h.wave = 0;
     h.spin.set((Math.random() - 0.5) * 1.6, (Math.random() - 0.5) * 1.6, (Math.random() - 0.5) * 1.6);
     h.rot.set(Math.random() * 6, Math.random() * 6, Math.random() * 6);
+  }
+
+  /** Take a body out of play, and settle its wave if it was the last one standing. */
+  private release(h: Hazard, out: HazardEvent[], hit = false) {
+    h.active = false;
+    const id = h.wave;
+    if (!id) return;
+    h.wave = 0;
+    const wave = this.waves.get(id);
+    if (!wave) return;
+    if (hit) wave.hit = true;
+    wave.remaining--;
+    if (wave.remaining > 0) return;
+    this.waves.delete(id);
+    // A wave that never connected is worth more than one that left a dent.
+    out.push({ type: "waveCleared", kind: h.kind, position: h.pos.clone(), points: wave.hit ? 90 : 160, damage: 0 });
+  }
+
+  /**
+   * A stream of debris: several bodies launched together from one bearing and staggered along the
+   * approach, so they arrive over a few seconds instead of as a single blob.
+   */
+  private launchWave(shipPos: THREE.Vector3, shipVel: THREE.Vector3, out: HazardEvent[]) {
+    const spec = this.waveSpec;
+    if (!spec) return;
+    const theta = Math.random() * Math.PI * 2;
+    const lift = (Math.random() - 0.5) * 0.35;
+    const dir = new THREE.Vector3(Math.cos(theta), lift, Math.sin(theta)).normalize();
+    const spread = spec.spread ?? 4;
+    const aim = new THREE.Vector3().copy(shipPos).addScaledVector(shipVel, 1.3);
+    const id = ++this.waveId;
+    let launched = 0;
+    for (let i = 0; i < spec.size; i++) {
+      const kind: HazardKind = spec.kind === "comet" ? "comet" : spec.kind === "asteroid" ? "asteroid" : i % 3 === 2 ? "comet" : "asteroid";
+      const pool = kind === "asteroid" ? this.asteroids : this.comets;
+      const h = pool.find((item) => !item.active);
+      if (!h) continue;
+      h.pos.copy(dir).multiplyScalar(19 + i * 1.5 + Math.random() * 2).add(shipPos);
+      h.pos.x += (Math.random() - 0.5) * spread;
+      h.pos.y += (Math.random() - 0.5) * spread * 0.45;
+      h.pos.z += (Math.random() - 0.5) * spread;
+      const speed = (kind === "comet" ? 3.6 + Math.random() * 1.2 : 1.9 + Math.random() * 0.8) * this.speedScale;
+      _a.copy(aim);
+      _a.x += (Math.random() - 0.5) * 2.5;
+      _a.y += (Math.random() - 0.5) * 1.5;
+      _a.z += (Math.random() - 0.5) * 2.5;
+      h.vel.copy(_a).sub(h.pos).normalize().multiplyScalar(speed);
+      h.active = true;
+      h.radius = kind === "comet" ? 0.3 : (0.34 + Math.random() * 0.5) * this.sizeScale;
+      h.hp = kind === "comet" ? 1 : h.radius > 0.62 ? 3 : 2;
+      h.life = kind === "comet" ? 26 : 38;
+      h.closest = Infinity;
+      h.wasNear = false;
+      h.counted = false;
+      h.wave = id;
+      h.spin.set((Math.random() - 0.5) * 1.6, (Math.random() - 0.5) * 1.6, (Math.random() - 0.5) * 1.6);
+      h.rot.set(Math.random() * 6, Math.random() * 6, Math.random() * 6);
+      launched++;
+    }
+    if (launched === 0) return;
+    this.waves.set(id, { remaining: launched, hit: false });
+    out.push({ type: "waveIncoming", kind: spec.kind === "comet" ? "comet" : "asteroid", position: dir.clone().multiplyScalar(19).add(shipPos), points: launched, damage: 0 });
   }
 
   update(dt: number, shipPos: THREE.Vector3, shipVel: THREE.Vector3, gm: number, out: HazardEvent[]) {
@@ -221,7 +317,14 @@ export class HazardField {
     this.spawnTimer -= dt * this.intensity;
     if (this.spawnTimer <= 0) {
       this.spawnTimer = 1.6 + Math.random() * 2.4;
-      this.spawn(Math.random() < 0.3 ? "comet" : "asteroid", shipPos, shipVel);
+      this.spawn(Math.random() < this.cometShare ? "comet" : "asteroid", shipPos, shipVel);
+    }
+    if (this.waveSpec) {
+      this.waveTimer -= dt;
+      if (this.waveTimer <= 0) {
+        this.waveTimer = this.waveSpec.every * (0.85 + Math.random() * 0.3);
+        this.launchWave(shipPos, shipVel, out);
+      }
     }
 
     // --- projectiles ---
@@ -262,11 +365,11 @@ export class HazardField {
 
         // Collision with the Ranger.
         if (d < h.radius + 0.42) {
-          h.active = false;
           out.push({
             type: "hit", kind: h.kind, position: h.pos.clone(),
             points: 0, damage: isComet ? 16 : 11 + h.radius * 14,
           });
+          this.release(h, out, true);
           continue;
         }
 
@@ -289,11 +392,11 @@ export class HazardField {
           this.shotPos[i3] = this.shotPos[i3 + 1] = this.shotPos[i3 + 2] = 9999;
           h.hp -= 1;
           if (h.hp <= 0) {
-            h.active = false;
             out.push({
               type: "destroyed", kind: h.kind, position: h.pos.clone(),
               points: isComet ? 120 : 70 + Math.round(h.radius * 60), damage: 0,
             });
+            this.release(h, out);
           }
           break;
         }
@@ -301,7 +404,7 @@ export class HazardField {
 
         // Retire anything lost to the hole, or far behind us.
         if (h.life <= 0 || r < 1.15 || d > 46) {
-          h.active = false;
+          this.release(h, out);
           continue;
         }
 

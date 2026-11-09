@@ -29,6 +29,7 @@ export function MissionControl({ progress, campaign, onLaunch, onLearn, onClose,
           <p className="micro-label">Level {String(selected + 1).padStart(2, "0")} / {mission.subtitle}</p>
           <h3>{mission.title}</h3>
           <p className="mission-description">{mission.description}</p>
+          {mission.conditions && <ul className="mission-conditions" aria-label="Flight conditions">{mission.conditions.map((condition) => <li key={condition}>{condition}</li>)}</ul>}
           <h4 className="micro-label">Your objectives</h4>
           <ul className="mission-task-list">{mission.tasks.map((task) => {
             const value = active ? Math.min(task.goal, campaign.stats[task.metric]) : 0;
