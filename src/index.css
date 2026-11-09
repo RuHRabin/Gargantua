@@ -232,6 +232,8 @@ button, a, input, select { -webkit-tap-highlight-color: transparent; }
 .mission-number { font: 15px var(--font-mono); color: #87997f; }
 .mission-row strong { font-size: 14px; font-weight: 400; }
 .mission-row small { display: block; margin-top: 7px; font-size: 8px; line-height: 1.8; color: #7d9180; }
+.mission-conditions { display: flex; flex-wrap: wrap; gap: 6px; margin: 14px 0 22px; padding: 0; list-style: none; }
+.mission-conditions li { padding: 5px 9px; border: 1px solid #c9ad7a4d; background: #c9ad7a0f; color: #d9c18f; font: 9px/1.4 var(--font-mono); letter-spacing: .1em; text-transform: uppercase; }
 .mission-row-arrow { margin-left: auto; color: #97a280; }
 .mission-detail { overflow: auto; padding: 37px 38px; }
 .mission-detail h3 { margin: 10px 0 19px; font-size: clamp(30px, 3.4vw, 49px); font-weight: 300; color: #e4e2cc; letter-spacing: -.04em; }
@@ -286,7 +288,7 @@ button, a, input, select { -webkit-tap-highlight-color: transparent; }
 .mission-task-progress { display: flex; justify-content: space-between; margin-top: 8px; font: 9px var(--font-mono); color: #bcc5a5; }
 .mission-task-progress > span:last-child { color: #e3c28a; }
 .level-track { display: flex; gap: 4px; margin-top: 16px; }
-.level-track span { width: 22px; height: 2px; background: #dee2cd26; }.level-track span.done { background: #9db392; }.level-track span.active { background: #ddbd81; }
+.level-track span { flex: 1 1 0; min-width: 0; max-width: 22px; height: 2px; background: #dee2cd26; }.level-track span.done { background: #9db392; }.level-track span.active { background: #ddbd81; }
 .clock-hud { top: 94px; right: 29px; text-align: right; width: 257px; padding: 12px 14px; background: linear-gradient(270deg, #070c1088, transparent 92%); }
 .clock-ratio { color: #e1d9be; font: 38px var(--font-mono); letter-spacing: -.045em; margin-top: 9px; }
 .clock-ratio small { font: 17px var(--font-display); color: #bfac80; margin-left: 3px; }
@@ -618,4 +620,6 @@ html, body { overscroll-behavior: none; -webkit-user-select: none; user-select: 
 @media (max-height: 600px) and (orientation: portrait) and (max-width: 620px) {
   .hud-actions button { min-height: 42px; }
   .hud-actions .tilt-toggle, .hud-actions .tilt-recenter { min-height: 30px; }
+  .current-task { -webkit-line-clamp: 1; }
+  .sail-readout { display: none; }
 }
