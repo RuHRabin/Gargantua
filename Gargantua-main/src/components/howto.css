@@ -1,0 +1,21 @@
+.howto { padding: 20px 30px 26px; overflow-y: auto; }
+.howto-steps { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.howto-steps button { display: flex; flex-direction: column; gap: 5px; padding: 10px 8px; border: 0; border-top: 2px solid #3c4a44; background: none; color: #82938a; font-size: 10px; text-align: left; }
+.howto-steps button span { font: 8px var(--font-mono); color: #66786e; }
+.howto-steps button.done { border-color: #8fb3a6; }
+.howto-steps button.active { border-color: #e3c795; color: #ece1c6; }
+.howto-page { margin-top: 20px; animation: reveal .3s ease-out both; }
+.howto-page h3 { font: 300 26px var(--font-display); color: #ece9dd; }
+.howto-lead { margin-top: 10px; font-size: 13px; line-height: 1.8; color: #bcc8bc; }
+.howto-page dl { margin: 16px 0 0; }
+.howto-page dl > div { display: grid; grid-template-columns: 170px 1fr; gap: 14px; padding: 11px 0; border-bottom: 1px solid #bdc7ba17; }
+.howto-page dt { font: 9px/1.7 var(--font-mono); letter-spacing: .06em; color: #dcc28d; }
+.howto-page dd { margin: 0; font-size: 11px; line-height: 1.75; color: #aebcaf; }
+.howto-actions { display: flex; justify-content: space-between; align-items: center; margin-top: 22px; }
+.howto-actions .primary-button { min-width: 170px; justify-content: space-between; }
+@media (max-width: 620px) {
+  .howto { padding: 16px 18px 20px; }
+  .howto-steps button { font-size: 0; padding: 8px 4px; }
+  .howto-steps button span { font-size: 9px; }
+  .howto-page dl > div { grid-template-columns: 1fr; gap: 4px; }
+}
