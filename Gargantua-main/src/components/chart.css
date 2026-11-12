@@ -1,0 +1,44 @@
+.chart-layout { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 275px; }
+.chart-map { min-width: 0; overflow: auto; padding: 27px 28px; }
+.chart-heading { display: flex; align-items: center; justify-content: space-between; gap: 15px; margin-bottom: 20px; }
+.chart-heading h3 { margin-top: 5px; font: 300 26px var(--font-display); color: #e6e6d7; }
+.chart-coverage { display: flex; align-items: center; gap: 8px; color: #8fa194; font: 8px/1.6 var(--font-mono); text-transform: uppercase; letter-spacing: .12em; }
+.chart-coverage strong { color: #dfcb9e; font: 30px/1 var(--font-mono); font-variant-numeric: tabular-nums; }
+.chart-compass, .sector-cells { display: grid; grid-template-columns: repeat(8, minmax(25px, 1fr)); gap: 5px; }
+.chart-compass { margin-left: 114px; margin-bottom: 8px; }
+.chart-compass span { text-align: center; font: 8px var(--font-mono); color: #738b80; }
+.sector-row { display: flex; gap: 9px; align-items: center; margin-bottom: 7px; }
+.sector-ring-label { width: 105px; flex: 0 0 105px; font: 7px var(--font-mono); letter-spacing: .08em; text-transform: uppercase; color: #839487; }
+.sector-cells { flex: 1; }
+.sector-cell { position: relative; display: grid; place-items: center; aspect-ratio: 1.12; min-height: 31px; padding: 0; border: 1px solid #9cae9722; border-radius: 2px; background: #0c171a; color: #77918a; transition: background .15s, border-color .15s, transform .15s; }
+.sector-cell:hover { z-index: 1; transform: scale(1.08); border-color: #e1c892; background: #293334; }
+.sector-cell.charted { background: #9bc6c01c; border-color: #9bc6c04a; }
+.sector-cell.current { background: #c7ab6e2c; border-color: #e8c97d; box-shadow: 0 0 10px #d4b47033; color: #ffe3a0; }
+.sector-vessel { font-size: 13px; color: #ffe6ac; text-shadow: 0 0 9px #ffe6ac; }
+.sector-dot { width: 5px; height: 5px; border-radius: 50%; background: #add7ce; box-shadow: 0 0 7px #add7ce70; }
+.sector-question { font-size: 17px; color: #53675e; }
+.chart-legend { display: flex; flex-wrap: wrap; gap: 17px; margin-top: 18px; padding-top: 12px; border-top: 1px solid #bac7ba18; }
+.chart-legend span { display: flex; align-items: center; gap: 7px; font: 8px var(--font-mono); letter-spacing: .1em; color: #81948a; }
+.chart-legend i { width: 7px; height: 7px; display: inline-block; border-radius: 50%; }
+.legend-known { background: #add7ce; }.legend-current { background: #ffe3a0; box-shadow: 0 0 8px #ffe3a055; }.legend-unknown { background: #33443d; }
+.chart-side { padding: 27px 23px; border-left: 1px solid #bdc7ba1e; background: #0a11142c; }
+.chart-side h4 { margin-top: 9px; color: #e5d3ad; font: 300 24px var(--font-display); }
+.chart-location { margin-top: 7px; color: #93a398; font: 8px var(--font-mono); letter-spacing: .15em; text-transform: uppercase; }
+.chart-location-rule { height: 1px; margin: 18px 0; background: linear-gradient(90deg, #c3a9798c, transparent); }
+.chart-copy { color: #9cafa1; font-size: 10px; line-height: 1.9; }
+.chart-stat { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; padding: 11px 0; border-bottom: 1px solid #bac7ba17; color: #8ea093; font-size: 9px; }
+.chart-stat strong { color: #d5cfb3; font: 16px var(--font-mono); font-variant-numeric: tabular-nums; }
+.chart-route-note { display: flex; align-items: flex-start; gap: 8px; margin-top: 18px; color: #889c8d; font: 8px/1.8 var(--font-mono); }
+.chart-pulse { width: 6px; height: 6px; flex: 0 0 6px; margin-top: 4px; border-radius: 50%; background: #9fd0bf; box-shadow: 0 0 8px #9fd0bf88; }
+.chart-return { width: 100%; margin-top: 22px; justify-content: space-between; }
+
+@media (max-width: 720px) {
+  .chart-layout { display: flex; flex-direction: column; overflow-y: auto; }
+  .chart-map { overflow: visible; padding: 17px 15px; }
+  .chart-side { border-left: 0; border-top: 1px solid #bdc7ba1e; padding: 17px 20px 22px; }
+  .chart-compass { margin-left: 86px; gap: 3px; }
+  .sector-row { gap: 6px; margin-bottom: 5px; }
+  .sector-ring-label { width: 80px; flex-basis: 80px; font-size: 6px; }
+  .sector-cells { gap: 3px; }
+  .sector-cell { min-height: 25px; }
+}
