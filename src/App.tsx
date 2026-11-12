@@ -68,6 +68,7 @@ export default function App() {
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [discovery, setDiscovery] = useState<string | null>(null);
   const [flash, setFlash] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
   const timerRef = useRef(new Set<ReturnType<typeof setTimeout>>());
   const nextId = useRef(0);
 
@@ -328,6 +329,15 @@ export default function App() {
   const changeTiltInvert = useCallback((tiltInvert: boolean) => setPreferences((previous) => ({ ...previous, tiltInvert })), []);
   const changeHumor = useCallback((humor: number) => setPreferences((previous) => ({ ...previous, humor })), []);
 
+  // The phone flight menu closes when you pick something, change screen, or tap elsewhere.
+  useEffect(() => { setMenuOpen(false); }, [phase, panel]);
+  useEffect(() => {
+    if (!menuOpen) return;
+    const close = (event: PointerEvent) => { if (!(event.target as Element | null)?.closest?.(".main-navigation")) setMenuOpen(false); };
+    window.addEventListener("pointerdown", close);
+    return () => window.removeEventListener("pointerdown", close);
+  }, [menuOpen]);
+
   return (
     <div className={`gargantua-app ${phase === "play" ? "in-flight" : ""} ${panel ? "panel-open" : ""}`}>
       <canvas ref={canvasRef} className="universe-canvas" aria-label="Interactive three-dimensional black hole and spacecraft simulation" />
@@ -336,10 +346,11 @@ export default function App() {
       {error && <div className="fallback-universe" aria-hidden="true"><div /><i /></div>}
       <div className={`letterbox top ${phase === "play" ? "open" : ""}`} /><div className={`letterbox bottom ${phase === "play" ? "open" : ""}`} />
 
-      <header className={`main-navigation ${phase === "play" ? "flight-navigation" : ""}`}>
+      <header className={`main-navigation ${phase === "play" ? "flight-navigation" : ""} ${menuOpen ? "menu-open" : ""}`}>
         <button className="brand-link" aria-label="Gargantua home" onClick={phase === "play" ? showMissions : returnToOrbit}><OrbitMark /><span>Gargantua</span></button>
         <span className="nav-subtitle">An interactive expedition</span>
-        <nav aria-label="Main navigation"><button disabled={phase === "countdown"} onClick={showMissions}>Missions</button><button disabled={phase === "countdown"} onClick={showGuide}>Field guide <span className="nav-key">J</span></button>{phase === "play" && <button onClick={showChart}>Star chart <span className="nav-key">M</span></button>}<button disabled={phase === "countdown"} onClick={showNasa}>NASA live</button><button disabled={phase === "countdown"} onClick={showHowTo}>How to play</button><button disabled={phase === "countdown"} className="settings-button" onClick={() => openPanel("settings")} aria-label="Open flight settings"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1"><path d="M4 7h16M4 17h16" /><circle cx="9" cy="7" r="2.5" fill="#080c0e" /><circle cx="16" cy="17" r="2.5" fill="#080c0e" /></svg></button></nav>
+        <nav aria-label="Main navigation" onClick={() => setMenuOpen(false)}><button disabled={phase === "countdown"} onClick={showMissions}>Missions</button><button disabled={phase === "countdown"} onClick={showGuide}><span className="nav-long">Field guide</span><span className="nav-short">Guide</span> <span className="nav-key">J</span></button>{phase === "play" && <button onClick={showChart}><span className="nav-long">Star chart</span><span className="nav-short">Chart</span> <span className="nav-key">M</span></button>}<button disabled={phase === "countdown"} onClick={showNasa}><span className="nav-long">NASA live</span><span className="nav-short">NASA</span></button><button disabled={phase === "countdown"} onClick={showHowTo}><span className="nav-long">How to play</span><span className="nav-short">Help</span></button><button disabled={phase === "countdown"} className="settings-button" onClick={() => openPanel("settings")} aria-label="Open flight settings"><span className="settings-label">Settings</span><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1"><path d="M4 7h16M4 17h16" /><circle cx="9" cy="7" r="2.5" fill="#080c0e" /><circle cx="16" cy="17" r="2.5" fill="#080c0e" /></svg></button></nav>
+        <button className="menu-toggle" aria-label="Menu" aria-expanded={menuOpen} onClick={() => setMenuOpen((open) => !open)}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.2"><path d="M4 7h16M4 12h16M4 17h16" /></svg></button>
       </header>
 
       {phase === "intro" && <Intro onBegin={begin} onGuide={showGuide} ready={ready} error={error} level={progress.completedLevel >= MISSIONS.length ? 1 : progress.unlockedLevel} />}

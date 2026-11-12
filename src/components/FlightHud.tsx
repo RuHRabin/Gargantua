@@ -1,12 +1,12 @@
-import { memo, useEffect, useRef, useSyncExternalStore, type RefObject } from "react";
+import { memo, useEffect, useRef, useState, useSyncExternalStore, type RefObject } from "react";
 import type { Engine } from "../game/Engine";
 import type { Telemetry } from "../game/telemetry";
 import { MISSIONS } from "../game/campaign";
 
 const gauge = (value: number) => `${Math.max(0, Math.min(100, value))}%`;
 
-function Resource({ label, value, color, hint }: { label: string; value: number; color: string; hint?: string }) {
-  return <div className={`resource-line ${value < 15 ? "low" : ""}`}><div><span>{label}</span><strong>{Math.round(value)}<small>%</small></strong></div><div className="resource-track"><span style={{ width: gauge(value), background: value < 15 ? "#ef9169" : color }} /></div>{hint && <p>{hint}</p>}</div>;
+function Resource({ label, short, value, color, hint }: { label: string; short?: string; value: number; color: string; hint?: string }) {
+  return <div className={`resource-line ${value < 15 ? "low" : ""}`}><div><span><span className="res-long">{label}</span><span className="res-short">{short ?? label}</span></span><strong>{Math.round(value)}<small>%</small></strong></div><div className="resource-track"><span style={{ width: gauge(value), background: value < 15 ? "#ef9169" : color }} /></div>{hint && <p>{hint}</p>}</div>;
 }
 
 /** Centre dot of the reticle. While tilt steering is on it follows the tilt input every frame, like a bubble level. */
@@ -31,6 +31,8 @@ export const FlightHud = memo(function FlightHud({ telemetry, engine, onMissions
   telemetry: Telemetry; engine: RefObject<Engine | null>; onMissions: () => void; onGuide: () => void; onToggleTilt?: (on: boolean) => void;
 }) {
   const hud = useSyncExternalStore(telemetry.subscribe, telemetry.getSnapshot, telemetry.getSnapshot);
+  // Phones keep the HUD to the essentials; drive mode, arrays, autopilot, scan and tilt live in this drawer.
+  const [systemsOpen, setSystemsOpen] = useState(false);
   if (!hud) return null;
   const mission = MISSIONS[hud.campaign.level - 1];
   const stats = hud.campaign.stats;
@@ -40,7 +42,7 @@ export const FlightHud = memo(function FlightHud({ telemetry, engine, onMissions
     <>
       <div className="hazard-vignette" style={{ opacity: Math.max(0, (hud.proximity - 0.7) * 3) }} />
       {/* On phones every HUD panel shares one grid so they stack instead of overlapping; on larger screens the wrappers are display: contents and each panel keeps its own corner. */}
-      <div className="hud-dock">
+      <div className={`hud-dock ${systemsOpen ? "systems-open" : ""}`}>
         <aside className="mission-hud flight-instrument">
           <div className="instrument-heading"><span className="micro-label">Level {String(hud.campaign.level).padStart(2, "0")} / {String(MISSIONS.length).padStart(2, "0")}</span><button onClick={onMissions} aria-label="Open mission objectives">+</button></div>
           <h2>{mission.title}</h2>
@@ -49,7 +51,7 @@ export const FlightHud = memo(function FlightHud({ telemetry, engine, onMissions
           <div className="mission-task-progress"><span>{Math.min(task.goal, stats[task.metric]).toFixed(task.unit ? 1 : 0)} / {task.goal}{task.unit ?? ""}</span><span>{hud.campaign.levelPoints.toLocaleString()} <small>lvl</small> · {hud.campaign.points.toLocaleString()} PTS</span></div>
           <div className="level-track" aria-label={`${hud.campaign.completed} missions complete`}>{MISSIONS.map((entry, i) => <span key={entry.id} className={i < hud.campaign.completed ? "done" : i === hud.campaign.level - 1 ? "active" : ""} />)}</div>
         </aside>
-        <aside className="clock-hud flight-instrument">
+        <aside className={`clock-hud flight-instrument ${Number.isFinite(hud.maxYears) ? "" : "no-deadline"}`}>
           <p className="micro-label">Gravitational clock ratio</p>
           <div className="clock-ratio">{hud.dilation.toFixed(2)}<small>x</small></div>
           <p className="clock-comparison">1 local hour = {hud.dilation.toFixed(2)} distant hours</p>
@@ -62,6 +64,7 @@ export const FlightHud = memo(function FlightHud({ telemetry, engine, onMissions
           {hud.combo > 1 && <span className="combo-status">Signal chain x{hud.combo} / +{(hud.combo - 1) * 25}%</span>}
           {hud.campaign.streak >= 3 && <span className={`streak-status tier-${hud.campaign.streakMultiplier >= 3 ? 3 : hud.campaign.streakMultiplier >= 2 ? 2 : 1}`}>Streak {hud.campaign.streak} / x{hud.campaign.streakMultiplier} points</span>}
         </div>
+        <button className="systems-toggle" aria-expanded={systemsOpen} onClick={() => setSystemsOpen((open) => !open)}><span className={`systems-dot ${hud.arrays || hud.autopilot || hud.converting || hud.autoRefining || hud.tilt ? "on" : ""}`} />{systemsOpen ? "Close" : "Systems"}</button>
         <div className="hud-actions">
           <aside className="defense-hud flight-instrument">
             <div className="instrument-heading"><span className="micro-label">Debris watch</span><span className={`threat-chip ${hud.threatDistance < 6 ? "near" : ""}`}>{hud.threatDistance === Infinity ? "Clear" : `${hud.threatKind === "comet" ? "Comet" : "Asteroid"} ${hud.threatDistance.toFixed(1)} rs`}</span></div>
@@ -88,8 +91,8 @@ export const FlightHud = memo(function FlightHud({ telemetry, engine, onMissions
         </div>
         <aside className="resources-hud flight-instrument">
           <p className="micro-label resource-header">Ranger / Systems</p>
-          <Resource label="Hull integrity" value={hud.hull} color="#cf8f7a" hint={hud.docking ? "Docked / repairs under way" : "Impacts cost hull and cargo"} />
-          <Resource label="Propellant" value={hud.propellant} color="#d8ac74" hint={hud.engineMode === "sail" ? "Sail mode / no propellant used" : hud.engineMode === "ion" ? "Ion drive / sips propellant, drinks charge" : "Chemical engines / heavy use per burn"} />
+          <Resource label="Hull integrity" short="Hull" value={hud.hull} color="#cf8f7a" hint={hud.docking ? "Docked / repairs under way" : "Impacts cost hull and cargo"} />
+          <Resource label="Propellant" short="Fuel" value={hud.propellant} color="#d8ac74" hint={hud.engineMode === "sail" ? "Sail mode / no propellant used" : hud.engineMode === "ion" ? "Ion drive / sips propellant, drinks charge" : "Chemical engines / heavy use per burn"} />
           <Resource label="Charge" value={hud.charge} color="#9fc9dc" hint={hud.arrays ? `Collecting disk light / +${hud.solarRate.toFixed(1)}% per second` : "Arrays stowed / R to collect light"} />
           <Resource label="Water" value={hud.water} color="#77999e" hint={hud.converting ? "Electrolysis / water + charge -> propellant" : hud.autoRefining ? "Auto-refinery running on surplus charge" : "Comet ice refills water / C or G refines it"} />
           <div className="drive-select" role="group" aria-label="Propulsion mode">

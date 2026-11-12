@@ -70,6 +70,7 @@ button, a, input, select { -webkit-tap-highlight-color: transparent; }
 .main-navigation nav { margin-left: auto; display: flex; gap: 32px; align-items: center; }
 .main-navigation nav button { color: #bcbeb6; background: none; border: 0; padding: 6px 0; font-size: 11px; letter-spacing: .055em; transition: color .25s; }
 .main-navigation nav button:hover { color: #eac592; }
+.nav-short { display: none; }
 .nav-key { margin-left: 6px; border: 1px solid #a5a89a35; padding: 1px 4px; color: #82877f; font: 8px var(--font-mono); }
 .main-navigation .settings-button { padding: 3px 0 3px 9px; }
 .main-navigation.flight-navigation { top: 20px; left: 28px; right: 28px; padding-bottom: 16px; }
@@ -560,11 +561,23 @@ html, body { overscroll-behavior: none; -webkit-user-select: none; user-select: 
   .sound-switch.during-flight { left: var(--hud-x); bottom: 8px; font-size: 8px; }
 }
 
-/* Header on phones: the gear stays pinned while the links scroll, and the scroll hint is a soft fade behind it. */
+/* Header on phones: short labels (Guide, Chart, NASA, Help) so every action fits on one line with no clipping or scrolling,
+   plus a soft scrim so the header stays legible over a bright scene. */
 @media (max-width: 620px) {
-  .main-navigation nav { mask-image: none; scroll-snap-type: x proximity; overscroll-behavior-x: contain; }
-  .main-navigation nav button { scroll-snap-align: start; }
-  .main-navigation nav .settings-button { position: sticky; right: 0; padding-left: 20px; background: linear-gradient(90deg, #0000, #0a101980 55%, #0a101980); border-radius: 0 2px 2px 0; }
+  .nav-long { display: none; }
+  .nav-short { display: inline; }
+  .main-navigation { left: 16px; right: 16px; }
+  .main-navigation.flight-navigation { left: 12px; right: 12px; }
+  .main-navigation .brand-link { flex: 0 0 auto; }
+  .main-navigation nav { flex: 1 1 auto; min-width: 0; margin-left: 14px; gap: 6px; justify-content: space-between; max-width: none; mask-image: none; overscroll-behavior-x: contain; }
+  .main-navigation nav button { font-size: 10px; letter-spacing: .04em; padding: 6px 2px; }
+  .main-navigation .settings-button { padding: 3px 0 3px 4px; }
+  .main-navigation.flight-navigation .brand-link span { display: none; }
+  .gargantua-app.in-flight::before { content: ""; position: absolute; z-index: 6; left: 0; right: 0; top: 0; height: 76px; background: linear-gradient(180deg, #02050899, #0205080d 85%, transparent); pointer-events: none; }
+}
+@media (max-width: 340px) {
+  .main-navigation .brand-link span { display: none; }
+  .main-navigation nav { margin-left: 8px; }
 }
 
 /* Touch phones held sideways: three columns [mission + vitals | notices | navigation | action pad].
@@ -622,4 +635,80 @@ html, body { overscroll-behavior: none; -webkit-user-select: none; user-select: 
   .hud-actions .tilt-toggle, .hud-actions .tilt-recenter { min-height: 30px; }
   .current-task { -webkit-line-clamp: 1; }
   .sail-readout { display: none; }
+}
+
+/* ---------- Clean phone HUD ----------
+   By default a phone shows only what you need every second: the objective, the clock, a slim vitals strip
+   and the action buttons. Drive mode, arrays, electrolysis, autopilot, scan, tilt and the destination picker
+   sit behind the Systems button, and the header folds into one menu button during flight. */
+.systems-toggle, .menu-toggle, .settings-label, .res-short { display: none; }
+@keyframes hudSheetIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+
+@media (max-width: 620px), (max-width: 850px) and (orientation: portrait), (max-height: 500px) and (orientation: landscape) and (pointer: coarse) {
+  /* top row: no extras */
+  .hud-dock .mission-hud, .hud-dock .clock-hud { align-self: stretch; }
+  .hud-dock .clock-hud { display: flex; flex-direction: column; justify-content: center; }
+  .hud-dock .mission-hud .instrument-heading button, .instrument-learn { display: none; }
+  .clock-hud.no-deadline .scenario-clock { display: none; }
+
+  /* vitals become a slim status strip */
+  .res-long { display: none; }
+  .res-short { display: inline; }
+  .hud-dock:not(.systems-open) .resources-hud { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; padding: 8px 10px 9px; border-left: 1px solid var(--panel-line); }
+  .hud-dock:not(.systems-open) .resource-line { margin-top: 0; }
+  .hud-dock:not(.systems-open) .drive-select, .hud-dock:not(.systems-open) .resource-actions, .hud-dock:not(.systems-open) .sail-readout, .hud-dock:not(.systems-open) .navigation-hud { display: none; }
+  .hud-dock.systems-open .resources-hud, .hud-dock.systems-open .navigation-hud { animation: hudSheetIn .18s ease-out; }
+
+  /* Systems pill, bottom left */
+  .systems-toggle { display: inline-flex; align-items: center; gap: 8px; grid-column: 1; grid-row: 3; align-self: end; justify-self: start; min-height: 38px; padding: 0 15px 0 12px; border: 1px solid #a7b7a84d; border-radius: 19px; background: #061119b3; box-shadow: inset 0 1px 0 #ffffff0a; color: #c4d0b8; font: 8px/1 var(--font-mono); letter-spacing: .14em; text-transform: uppercase; transition: border-color .15s, color .15s, background .15s; -webkit-tap-highlight-color: transparent; }
+  .systems-toggle:active, .systems-toggle[aria-expanded="true"] { color: #edcc8e; border-color: #e1c39280; background: #a7863e26; }
+  .systems-dot { width: 6px; height: 6px; border-radius: 50%; background: #55605a; }
+  .systems-dot.on { background: #9fd0a3; box-shadow: 0 0 7px #9fd0a3aa; }
+
+  /* status text floats just above the buttons */
+  .flight-center-status { grid-column: 1; grid-row: 3; align-self: start; justify-self: start; }
+
+  /* round action buttons; Thrust carries the accent */
+  .hud-actions { grid-template-columns: repeat(2, 56px); gap: 6px; }
+  .hud-actions button { height: 56px; min-height: 0; padding: 2px; border-radius: 50%; overflow: hidden; position: relative; font-size: 7.5px; }
+  .hud-actions .tilt-toggle, .hud-actions .tilt-recenter { height: 30px; border-radius: 15px; }
+  .mobile-flight-controls button:nth-child(1) { color: #edcc8e; border-color: #e1c39299; background: radial-gradient(circle at 50% 30%, #c9ad7a38, #061119b3 72%); }
+  .sound-switch.during-flight { font-size: 0; gap: 0; padding: 6px 10px; left: calc(var(--hud-x) - 10px); bottom: 0; }
+}
+
+@media (max-height: 600px) and (orientation: portrait) and (max-width: 620px) {
+  .hud-actions { grid-template-columns: repeat(2, 48px); }
+  .hud-actions button { height: 48px; }
+  .hud-actions .tilt-toggle, .hud-actions .tilt-recenter { height: 28px; }
+}
+
+/* Flight header on phones: logo mark and one menu button; the links open as a list. */
+@media (max-width: 620px) {
+  .main-navigation.flight-navigation { border-bottom: 0; padding-bottom: 0; }
+  .flight-navigation .menu-toggle { display: inline-flex; align-items: center; justify-content: center; margin-left: auto; width: 40px; height: 40px; border: 1px solid var(--panel-line); border-radius: 50%; background: #061119b3; color: #cfd6c6; -webkit-tap-highlight-color: transparent; }
+  .flight-navigation.menu-open .menu-toggle { color: #edcc8e; border-color: #e1c39280; }
+  .flight-navigation nav { display: none; }
+  .flight-navigation.menu-open nav { display: flex; position: absolute; top: 48px; right: 0; z-index: 14; flex-direction: column; align-items: stretch; justify-content: flex-start; gap: 0; min-width: 200px; max-width: none; margin: 0; padding: 6px; overflow: visible; background: #070d11f2; border: 1px solid var(--panel-line); box-shadow: 0 14px 34px #000b; animation: hudSheetIn .16s ease-out; }
+  .flight-navigation.menu-open nav button { display: flex; align-items: center; justify-content: space-between; min-height: 44px; padding: 0 12px; font-size: 11px; letter-spacing: .05em; text-align: left; border-bottom: 1px solid #ffffff0f; }
+  .flight-navigation.menu-open nav button:last-child { border-bottom: 0; }
+  .flight-navigation.menu-open .nav-long { display: inline; }
+  .flight-navigation.menu-open .nav-short { display: none; }
+  .flight-navigation.menu-open .settings-label { display: inline; margin-right: 12px; }
+}
+
+/* sideways phones: 2x2 vitals under the mission panel when closed, and the Systems pill in the free top-right area */
+@media (max-height: 500px) and (orientation: landscape) and (pointer: coarse) {
+  .hud-dock:not(.systems-open) .resources-hud { grid-column: 1; grid-template-columns: 1fr 1fr; gap: 8px 12px; }
+  .systems-toggle { grid-column: 3; grid-row: 1; justify-self: end; align-self: start; }
+  .hud-actions { grid-template-columns: repeat(2, 48px); }
+  .hud-actions button { height: 48px; }
+  .hud-actions .tilt-toggle, .hud-actions .tilt-recenter { height: 28px; }
+  .flight-center-status { grid-column: 2; grid-row: 3; align-self: end; justify-self: center; }
+  .sound-switch.during-flight { padding: 4px 8px; left: calc(var(--hud-x) - 8px); bottom: 2px; }
+}
+@media (max-width: 640px) and (max-height: 500px) and (orientation: landscape) and (pointer: coarse) {
+  .flight-center-status { grid-column: 1 / -1; grid-row: 2; align-self: end; }
+}
+@media (max-height: 330px) and (orientation: landscape) and (pointer: coarse) {
+  .combo-status, .streak-status { display: none; }
 }
